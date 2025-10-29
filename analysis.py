@@ -19,10 +19,13 @@
 # datatran2025.csv - cada linha é referente a um acidente
 
 import pandas as pd
+import numpy as np
 
 pd.set_option('display.max_columns', 500)
 
 datatran2025 = pd.read_csv("data/datatran2025.csv", sep=';', encoding='latin1')
+
+print(f"--\nShape da df: {datatran2025.shape}\n--")
 
 # Buscando por valores vazios
 for col in datatran2025.columns:
@@ -30,6 +33,10 @@ for col in datatran2025.columns:
 
     if n_empty_rows > 0:
         print(f"Column {col}: {n_empty_rows} empty rows")
+
+# Dropando as poucas linhas que têm valor vazio
+datatran2025.dropna(how='any', inplace=True)
+print('[!] Colunas vazias removidas\n--')
 
 # Checando possíveis valores das colunas categóricas
 cat_cols = datatran2025.select_dtypes(exclude=['int64'])
@@ -53,5 +60,5 @@ for col in num_cols_with_comma:
 
 print(datatran2025[num_cols_with_comma].info()) # OK
 
+datatran2025['causa_acidente'].value_counts()
 # %%
-
