@@ -44,4 +44,14 @@ for col in cat_cols:
 datatran2025['timestamp'] = datatran2025['data_inversa'] + ' ' + datatran2025['horario']
 datatran2025['timestamp'] = pd.to_datetime(datatran2025['timestamp'], format="%Y-%m-%d %H:%M:%S")
 
+# Algumas colunas numéricas estão como objeto por estarem com , em vez de .
+num_cols_with_comma = ['km', 'latitude', 'longitude']
+
+for col in num_cols_with_comma:
+    datatran2025[col] = datatran2025[col].apply(lambda x: x.replace(',', '.'))
+    datatran2025[col] = datatran2025[col].astype('float64')
+
+print(datatran2025[num_cols_with_comma].info()) # OK
+
 # %%
+
