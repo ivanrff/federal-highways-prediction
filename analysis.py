@@ -1,3 +1,5 @@
+# %%
+
 # PROJETO ACIDENTES EM ESTRADAS FEDERAIS
 
 # acidentes2025.csv - cada linha é referente a uma pessoa
@@ -16,14 +18,30 @@
 
 # datatran2025.csv - cada linha é referente a um acidente
 
-# %%
 import pandas as pd
 
 pd.set_option('display.max_columns', 500)
 
 datatran2025 = pd.read_csv("data/datatran2025.csv", sep=';', encoding='latin1')
 
-print(datatran2025.columns)
+# Buscando por valores vazios
+for col in datatran2025.columns:
+    n_empty_rows = datatran2025[col].isna().sum()
 
-datatran2025.head(9)
+    if n_empty_rows > 0:
+        print(f"Column {col}: {n_empty_rows} empty rows")
+
+# Checando possíveis valores das colunas categóricas
+cat_cols = datatran2025.select_dtypes(exclude=['int64'])
+
+# Checando valores em cada coluna categórica
+for col in cat_cols:
+    print(col)
+    print("--", datatran2025[col].dtype)
+    print("--", datatran2025[col].unique())
+
+# Criando coluna timestamp a partir de data_inversa e horario
+datatran2025['timestamp'] = datatran2025['data_inversa'] + ' ' + datatran2025['horario']
+datatran2025['timestamp'] = pd.to_datetime(datatran2025['timestamp'], format="%Y-%m-%d %H:%M:%S")
+
 # %%
