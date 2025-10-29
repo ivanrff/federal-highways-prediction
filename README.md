@@ -1,0 +1,32 @@
+# Colunas datatran2025.csv
+
+- `id`
+- `data_inversa`: YYYY-MM-DD
+- `dia_semana`: dia da semana em string (Ex.: quarta-feira)
+- `horario`: HH:MM:SS
+- `uf`: RJ, SP, etc.
+- `br`: Identificação da rodovia
+- `km`: km da rodovia
+- `municipio`
+- `causa_acidente`: descrição da causa do acidente
+- `tipo_acidente`: classificação do tipo de acidente (colisão frontal, colisão traseira)
+- `classificacao_acidente`: com vítimas feridas, com vítimas fatais, etc.
+- `fase_dia`: dia, anoitecer, etc.
+- `sentido_via`: crescente/decrescente
+- `condicao_metereologica`
+- `tipo_pista`: múltipla, simples, dupla, etc.
+- `tracado_via`: reta ou curva, declive ou não.
+- `uso_solo`: Sim/Não
+- `pessoas`: número de pessoas envolvidas
+- `mortos`: número de mortos
+- `feridos_leves`: número de feridos leves
+- `feridos_graves`: número de feridos graves
+- `ilesos`: número de ilesos
+- `ignorados`: total de pessoas envolvidas na ocorrência e que não se soube o estado físico.
+- `feridos`: total de feridos
+- `veiculos`: veículos envolvidos
+- `latitude`:
+- `longitude`:
+- `regional`: divisão da PRF responsável
+- `delegacia`: delegacia responsável
+- `uop`: unidade operacional da prf
