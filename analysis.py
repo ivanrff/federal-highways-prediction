@@ -25,31 +25,33 @@ pd.set_option('display.max_columns', 500)
 
 datatran2025 = pd.read_csv("data/datatran2025.csv", sep=';', encoding='latin1')
 
-print(f"--\nShape da df: {datatran2025.shape}\n--")
+# print(f"--\nShape da df: {datatran2025.shape}\n--")
 
 # Buscando por valores vazios
 for col in datatran2025.columns:
     n_empty_rows = datatran2025[col].isna().sum()
 
-    if n_empty_rows > 0:
-        print(f"Column {col}: {n_empty_rows} empty rows")
+    # if n_empty_rows > 0:
+    #     print(f"Column {col}: {n_empty_rows} empty rows")
 
 # Dropando as poucas linhas que têm valor vazio
 datatran2025.dropna(how='any', inplace=True)
-print('[!] Colunas vazias removidas\n--')
+# print('[!] Colunas vazias removidas\n--')
 
-# Checando possíveis valores das colunas categóricas
-cat_cols = datatran2025.select_dtypes(exclude=['int64'])
+# # Checando possíveis valores das colunas categóricas
+# cat_cols = datatran2025.select_dtypes(exclude=['int64'])
 
-# Checando valores em cada coluna categórica
-for col in cat_cols:
-    print(col)
-    print("--", datatran2025[col].dtype)
-    print("--", datatran2025[col].unique())
+# # Checando valores em cada coluna categórica
+# for col in cat_cols:
+#     print(f"Coluna '{col}' valores:")
+#     # print("--", datatran2025[col].dtype)
+#     print("--", datatran2025[col].unique())
 
 # Criando coluna timestamp a partir de data_inversa e horario
 datatran2025['timestamp'] = datatran2025['data_inversa'] + ' ' + datatran2025['horario']
 datatran2025['timestamp'] = pd.to_datetime(datatran2025['timestamp'], format="%Y-%m-%d %H:%M:%S")
+
+datatran2025.drop(columns=['data_inversa', 'horario'], inplace=True)
 
 # Algumas colunas numéricas estão como objeto por estarem com , em vez de .
 num_cols_with_comma = ['km', 'latitude', 'longitude']
@@ -58,7 +60,35 @@ for col in num_cols_with_comma:
     datatran2025[col] = datatran2025[col].apply(lambda x: x.replace(',', '.'))
     datatran2025[col] = datatran2025[col].astype('float64')
 
-print(datatran2025[num_cols_with_comma].info()) # OK
+# print(datatran2025[num_cols_with_comma].info(), "\n--") # OK
 
-datatran2025['causa_acidente'].value_counts()
+# Checando possíveis valores das colunas categóricas
+cat_cols = datatran2025.select_dtypes(exclude=['int64', 'float64', 'datetime64[ns]'])
+
+# # Checando valores em cada coluna categórica
+# for col in cat_cols:
+#     print(f"Coluna '{col}' valores:")
+#     print("--", datatran2025[col].dtype)
+#     print(datatran2025[col].unique())
+
+# Retirando informações da coluna 'tracado_via'
+print(datatran2025['tracado_via'].unique())
+
+def curva_ou_reta(element):
+    element = element.lower()
+    if 'reta' in element:
+        # print('[RETA]', element)
+        return 'reta'
+    elif 'curva' in element:
+        # print('[CURVA]', element)
+        return 'curva'
+    else:
+        # print('[NR/NC]', element)
+        return np.nan
+
+datatran2025['is_reta'] = datatran2025['tracado_via'].apply(lambda x: 1 if 'reta' in x.lower() else 0)
+datatran2025['is_curva'] = datatran2025['tracado_via'].apply(lambda x: 1 if 'curva' in x.lower() else 0)
+datatran2025['curva_reta'] = datatran2025['tracado_via'].apply(curva_ou_reta)
+
+datatran2025['curva_reta'].value_counts()
 # %%
