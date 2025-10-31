@@ -62,8 +62,8 @@ for col in num_cols_with_comma:
 
 # print(datatran2025[num_cols_with_comma].info(), "\n--") # OK
 
-# Checando possíveis valores das colunas categóricas
-cat_cols = datatran2025.select_dtypes(exclude=['int64', 'float64', 'datetime64[ns]'])
+# # Checando possíveis valores das colunas categóricas
+# cat_cols = datatran2025.select_dtypes(exclude=['int64', 'float64', 'datetime64[ns]'])
 
 # # Checando valores em cada coluna categórica
 # for col in cat_cols:
@@ -71,24 +71,32 @@ cat_cols = datatran2025.select_dtypes(exclude=['int64', 'float64', 'datetime64[n
 #     print("--", datatran2025[col].dtype)
 #     print(datatran2025[col].unique())
 
-# Retirando informações da coluna 'tracado_via'
-print(datatran2025['tracado_via'].unique())
+# Tratando a coluna tracado_via (transformando com OHE)
+tracado_dummies = datatran2025['tracado_via'].str.get_dummies(sep=';')
 
-def curva_ou_reta(element):
-    element = element.lower()
-    if 'reta' in element:
-        # print('[RETA]', element)
-        return 'reta'
-    elif 'curva' in element:
-        # print('[CURVA]', element)
-        return 'curva'
-    else:
-        # print('[NR/NC]', element)
-        return np.nan
+tracado_dummies.columns = [
+        'tracado_' + col.strip()
+                        .replace(' ', '_')
+                        .lower()
+                        .replace('ã', 'a')
+                        .replace('á', 'a')
+                        .replace('ó', 'o')
+                        .replace('ú', 'u')
+                        .replace('ç', 'c')
+                        .replace('_de_vias', '')
+        for col in tracado_dummies.columns
+    ]
 
-datatran2025['is_reta'] = datatran2025['tracado_via'].apply(lambda x: 1 if 'reta' in x.lower() else 0)
-datatran2025['is_curva'] = datatran2025['tracado_via'].apply(lambda x: 1 if 'curva' in x.lower() else 0)
-datatran2025['curva_reta'] = datatran2025['tracado_via'].apply(curva_ou_reta)
+datatran2025 = pd.concat([datatran2025, tracado_dummies], axis=1)
 
-datatran2025['curva_reta'].value_counts()
+datatran2025.drop(columns='tracado_via', inplace=True)
+
+# Checando possíveis valores das colunas categóricas
+cat_cols = datatran2025.select_dtypes(exclude=['int64', 'float64', 'datetime64[ns]'])
+
+# Checando valores em cada coluna categórica
+for col in cat_cols:
+    print(f"Coluna '{col}' valores:")
+    print("--", datatran2025[col].dtype)
+    print(datatran2025[col].unique())
 # %%
