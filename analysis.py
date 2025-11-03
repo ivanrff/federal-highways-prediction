@@ -99,4 +99,20 @@ for col in cat_cols:
     print(f"Coluna '{col}' valores:")
     print("--", datatran2025[col].dtype)
     print(datatran2025[col].unique())
-# %%
+
+# mapeando os dias da semana de forma cíclica
+day_mapping = {
+    'domingo': 0,
+    'segunda-feira': 1,
+    'terça-feira': 2,
+    'quarta-feira': 3,
+    'quinta-feira': 4,
+    'sexta-feira': 5,
+    'sábado': 6
+}
+datatran2025['dia_numerico'] = datatran2025['dia_semana'].str.lower().map(day_mapping)
+
+datatran2025['dia_semana_sin'] = np.sin(2 * np.pi * datatran2025['dia_numerico'] / 7)
+datatran2025['dia_semana_cos'] = np.cos(2 * np.pi * datatran2025['dia_numerico'] / 7)
+
+datatran2025.drop('dia_numerico', axis=1, inplace=True)
