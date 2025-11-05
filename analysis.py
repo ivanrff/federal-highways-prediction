@@ -22,6 +22,7 @@ import pandas as pd
 import numpy as np
 from feature_engine.encoding import RareLabelEncoder
 from sklearn.preprocessing import OneHotEncoder
+from sklearn.model_selection import train_test_split
 
 # Set max rows to display all rows
 pd.set_option('display.max_rows', 30)
@@ -78,6 +79,19 @@ datatran['risco_grave'] = ((datatran['mortos'] > 0) | (datatran['feridos_graves'
 datatran.drop(columns=["mortos", "feridos_leves", "feridos_graves", "ilesos", "ignorados", "feridos",
                        "classificacao_acidente"], inplace=True)
 
+train_df, test_df = train_test_split(datatran, stratify=datatran['risco_grave'], test_size=0.1)
+
+def print_distr(y):
+    print(f'Distribuição da variável target: {y.sum()/len(y)}')
+
+print('TREINO')
+print(train_df.shape)
+print_distr(train_df['risco_grave'])
+print('TESTE')
+print(test_df.shape)
+print_distr(test_df['risco_grave'])
+print("-------------------------\n")
+
 # --------------------------------------------------------------------------------------------
 # ------------------------------ TRATAMENTO COLUNAS CATEGÓRICAS ------------------------------
 # --------------------------------------------------------------------------------------------
@@ -95,14 +109,20 @@ datatran.drop(columns=["mortos", "feridos_leves", "feridos_graves", "ilesos", "i
 # ------------------------------ COLUNAS data_inversa, horario -------------------------------
 # --------------------------------------------------------------------------------------------
 
-# Criando coluna timestamp a partir de data_inversa e horario
-datatran['timestamp'] = datatran['data_inversa'] + ' ' + datatran['horario']
-datatran['timestamp'] = pd.to_datetime(datatran['timestamp'], format="%Y-%m-%d %H:%M:%S")
+def criar_timestamp(df):
+    new_df = df.copy()
 
+    # Criando coluna timestamp a partir de data_inversa e horario
+    new_df['timestamp'] = new_df['data_inversa'] + ' ' + new_df['horario']
+    new_df['timestamp'] = pd.to_datetime(new_df['timestamp'], format="%Y-%m-%d %H:%M:%S")
 
-## -- DROP --
-datatran.drop(columns=['data_inversa', 'horario'], inplace=True)
+    ## -- DROP --
+    new_df.drop(columns=['data_inversa', 'horario'], inplace=True)
 
+    return new_df
+
+train_df = criar_timestamp(train_df)
+test_df = criar_timestamp(test_df)
 
 # --------------------------------------------------------------------------------------------
 # ----------------------------- COLUNAS km, latitude, longitude ------------------------------
@@ -111,12 +131,19 @@ datatran.drop(columns=['data_inversa', 'horario'], inplace=True)
 # Algumas colunas numéricas estão como objeto por estarem com , em vez de .
 num_cols_with_comma = ['km', 'latitude', 'longitude']
 
-for col in num_cols_with_comma:
-    datatran[col] = datatran[col].astype(str).str.replace(',', '.', regex=False)
-    datatran[col] = pd.to_numeric(datatran[col], errors='raise')
+def trocar_virgula_ponto(df, num_cols_with_comma):
+    new_df = df.copy()
 
-# print(datatran[num_cols_with_comma].info(), "\n--") # OK
+    for col in num_cols_with_comma:
+        new_df[col] = new_df[col].astype(str).str.replace(',', '.', regex=False)
+        new_df[col] = pd.to_numeric(new_df[col], errors='raise')
 
+    return new_df
+
+train_df = trocar_virgula_ponto(train_df, num_cols_with_comma)
+test_df = trocar_virgula_ponto(test_df, num_cols_with_comma)
+
+# print(train_df[num_cols_with_comma].info(), "\n--") # OK
 
 # --------------------------------------------------------------------------------------------
 # ---------------------------------- COLUNA dia_semana ---------------------------------------
@@ -132,28 +159,44 @@ day_mapping = {
     'sexta-feira': 5,
     'sábado': 6
 }
-datatran['dia_numerico'] = datatran['dia_semana'].str.lower().map(day_mapping)
 
-datatran['dia_semana_sin'] = np.sin(2 * np.pi * datatran['dia_numerico'] / 7)
-datatran['dia_semana_cos'] = np.cos(2 * np.pi * datatran['dia_numerico'] / 7)
+def enc_dia_semana(df, day_mapping):
+    new_df = df.copy()
 
-## -- DROP --
-datatran.drop(columns=['dia_numerico', 'dia_semana'], axis=1, inplace=True)
+    new_df['dia_numerico'] = new_df['dia_semana'].str.lower().map(day_mapping)
 
+    new_df['dia_semana_sin'] = np.sin(2 * np.pi * new_df['dia_numerico'] / 7)
+    new_df['dia_semana_cos'] = np.cos(2 * np.pi * new_df['dia_numerico'] / 7)
+
+    ## -- DROP --
+    new_df.drop(columns=['dia_numerico', 'dia_semana'], axis=1, inplace=True)
+
+    return new_df
+
+train_df = enc_dia_semana(train_df, day_mapping)
+test_df = enc_dia_semana(test_df, day_mapping)
 
 # --------------------------------------------------------------------------------------------
 # ------------------------------------- COLUNA uso_solo --------------------------------------
 # --------------------------------------------------------------------------------------------
 
 # Tratamento de uso_solo
-datatran['uso_solo'] = datatran['uso_solo'].replace({'Sim': 1, 'Não': 0}).astype('int64')
-# datatran['uso_solo'].value_counts(normalize=True) # ({0: 0.569314, 1: 0.430686})
+def enc_uso_solo(df):
+    new_df = df.copy()
+    new_df['uso_solo'] = new_df['uso_solo'].replace({'Sim': 1, 'Não': 0}).astype('int64')
+
+    return new_df
+
+train_df = enc_uso_solo(train_df)
+test_df = enc_uso_solo(test_df)
+
+# train_df['uso_solo'].value_counts(normalize=True)
 
 # --------------------------------------------------------------------------------------------
 # ---------------------------------- COLUNA tracado_via --------------------------------------
 # --------------------------------------------------------------------------------------------
 
-datatran['tracado_via'] = datatran['tracado_via'].apply(lambda x: x.strip()
+train_df['tracado_via'] = train_df['tracado_via'].apply(lambda x: x.strip()
                                                                     .replace(' ', '_')
                                                                     .lower()
                                                                     .replace('ã', 'a')
@@ -164,22 +207,22 @@ datatran['tracado_via'] = datatran['tracado_via'].apply(lambda x: x.strip()
                                                                     .replace('_de_vias', ''))
 
 # # Tratando a coluna tracado_via (transformando com OHE)
-# tracado_dummies = datatran['tracado_via'].str.get_dummies(sep=';')
+# tracado_dummies = train_df['tracado_via'].str.get_dummies(sep=';')
 
-# datatran = pd.concat([datatran, tracado_dummies], axis=1)
+# train_df = pd.concat([train_df, tracado_dummies], axis=1)
 
 # ## -- DROP --
-# datatran.drop(columns='tracado_via', inplace=True)
+# train_df.drop(columns='tracado_via', inplace=True)
 
 # Tratando a coluna tracado_via (transformando com OHE)
-tracado_dummies = datatran['tracado_via'].str.get_dummies(sep=';')
+tracado_dummies = train_df['tracado_via'].str.get_dummies(sep=';')
 
-datatran = pd.concat([datatran, tracado_dummies], axis=1)
+train_df = pd.concat([train_df, tracado_dummies], axis=1)
 
 cols_to_drop = []
 for col in tracado_dummies.columns:
     # print('------', col)
-    rate = datatran[col].sum()/datatran.shape[0]
+    rate = train_df[col].sum()/train_df.shape[0]
     # print(rate)
     if rate < 0.05:
         cols_to_drop.append(col)
@@ -187,8 +230,8 @@ for col in tracado_dummies.columns:
 # print(cols_to_drop)
 # ['desvio_temporario', 'em_obras', 'ponte', 'retorno_regulamentado', 'rotatoria', 'tunel', 'viaduto']
 
-datatran.drop(columns=cols_to_drop, inplace=True)
-# %%
+train_df.drop(columns=cols_to_drop, inplace=True)
+
 
 # --------------------------------------------------------------------------------------------
 # ------------------- COLUNAS municipio, delegacia, regional, uop, uf ------------------------
@@ -198,20 +241,20 @@ datatran.drop(columns=cols_to_drop, inplace=True)
 # uop vs. delegacia vs. regional
 # Escolher uma para OHE e remover as outras
 ## -- DROP --
-datatran.drop(columns=['municipio', 'delegacia', 'regional'], axis=1, inplace=True)
+train_df.drop(columns=['municipio', 'delegacia', 'regional'], axis=1, inplace=True)
 
-# uop_regional_dummies = pd.get_dummies(datatran[['uop', 'uf']])
-# datatran = pd.concat([datatran, uop_regional_dummies], axis=1)
+# uop_regional_dummies = pd.get_dummies(train_df[['uop', 'uf']])
+# train_df = pd.concat([train_df, uop_regional_dummies], axis=1)
 
 # ## -- DROP --
-# datatran.drop(columns=['uop', 'uf'], axis=1, inplace=True)
+# train_df.drop(columns=['uop', 'uf'], axis=1, inplace=True)
 
 # --------------------------------------------------------------------------------------------
 # --------------------------------------------------------------------------------------------
 # --------------------------------------------------------------------------------------------
 
 # Checando possíveis valores das colunas categóricas
-cat_cols = datatran.select_dtypes(include=['object']).columns
+cat_cols = train_df.select_dtypes(include=['object']).columns
 
 print("-----------------------------------------")
 print("Colunas categóricas:\n", cat_cols)
@@ -220,7 +263,7 @@ print("-----------------------------------------")
 # Checando valores em cada coluna categórica
 for n, col in enumerate(cat_cols):
     print(f"\n{n+1}. Coluna '{col}' valores:")
-    print("--", datatran[col].dtype)
-    # print(datatran[col].unique())
-    print(datatran[col].value_counts(normalize=True))
+    print("--", train_df[col].dtype)
+    # print(train_df[col].unique())
+    print(train_df[col].value_counts(normalize=True))
 # %%
