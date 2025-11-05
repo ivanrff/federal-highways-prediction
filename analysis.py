@@ -183,7 +183,9 @@ test_df = enc_dia_semana(test_df, day_mapping)
 # Tratamento de uso_solo
 def enc_uso_solo(df):
     new_df = df.copy()
-    new_df['uso_solo'] = new_df['uso_solo'].replace({'Sim': 1, 'Não': 0}).astype('int64')
+    new_df['uso_solo'] = (new_df['uso_solo']
+                            .replace({'Sim': '1', 'Não': '0'}) # coloquei '1' e '0' para suprimir o Warning de downcasting do pandas
+                                .astype('int64'))
 
     return new_df
 
@@ -191,46 +193,6 @@ train_df = enc_uso_solo(train_df)
 test_df = enc_uso_solo(test_df)
 
 # train_df['uso_solo'].value_counts(normalize=True)
-
-# --------------------------------------------------------------------------------------------
-# ---------------------------------- COLUNA tracado_via --------------------------------------
-# --------------------------------------------------------------------------------------------
-
-train_df['tracado_via'] = train_df['tracado_via'].apply(lambda x: x.strip()
-                                                                    .replace(' ', '_')
-                                                                    .lower()
-                                                                    .replace('ã', 'a')
-                                                                    .replace('á', 'a')
-                                                                    .replace('ó', 'o')
-                                                                    .replace('ú', 'u')
-                                                                    .replace('ç', 'c')
-                                                                    .replace('_de_vias', ''))
-
-# # Tratando a coluna tracado_via (transformando com OHE)
-# tracado_dummies = train_df['tracado_via'].str.get_dummies(sep=';')
-
-# train_df = pd.concat([train_df, tracado_dummies], axis=1)
-
-# ## -- DROP --
-# train_df.drop(columns='tracado_via', inplace=True)
-
-# Tratando a coluna tracado_via (transformando com OHE)
-tracado_dummies = train_df['tracado_via'].str.get_dummies(sep=';')
-
-train_df = pd.concat([train_df, tracado_dummies], axis=1)
-
-cols_to_drop = []
-for col in tracado_dummies.columns:
-    # print('------', col)
-    rate = train_df[col].sum()/train_df.shape[0]
-    # print(rate)
-    if rate < 0.05:
-        cols_to_drop.append(col)
-
-# print(cols_to_drop)
-# ['desvio_temporario', 'em_obras', 'ponte', 'retorno_regulamentado', 'rotatoria', 'tunel', 'viaduto']
-
-train_df.drop(columns=cols_to_drop, inplace=True)
 
 
 # --------------------------------------------------------------------------------------------
@@ -242,6 +204,7 @@ train_df.drop(columns=cols_to_drop, inplace=True)
 # Escolher uma para OHE e remover as outras
 ## -- DROP --
 train_df.drop(columns=['municipio', 'delegacia', 'regional'], axis=1, inplace=True)
+test_df.drop(columns=['municipio', 'delegacia', 'regional'], axis=1, inplace=True)
 
 # uop_regional_dummies = pd.get_dummies(train_df[['uop', 'uf']])
 # train_df = pd.concat([train_df, uop_regional_dummies], axis=1)
@@ -250,20 +213,84 @@ train_df.drop(columns=['municipio', 'delegacia', 'regional'], axis=1, inplace=Tr
 # train_df.drop(columns=['uop', 'uf'], axis=1, inplace=True)
 
 # --------------------------------------------------------------------------------------------
+# ---------------------------------- COLUNA tracado_via --------------------------------------
+# --------------------------------------------------------------------------------------------
+
+
+for df in [train_df, test_df]:
+    df['tracado_via'] = df['tracado_via'].apply(lambda x: x.strip()
+                                                                        .replace(' ', '_')
+                                                                        .lower()
+                                                                        .replace('ã', 'a')
+                                                                        .replace('á', 'a')
+                                                                        .replace('ó', 'o')
+                                                                        .replace('ú', 'u')
+                                                                        .replace('ç', 'c')
+                                                                        .replace('_de_vias', ''))
+
+# Tratando a coluna tracado_via (transformando com OHE)
+tracado_dummies_train = train_df['tracado_via'].str.get_dummies(sep=';')
+tracado_dummies_test = test_df['tracado_via'].str.get_dummies(sep=';')
+
+train_df = pd.concat([train_df, tracado_dummies_train], axis=1)
+test_df = pd.concat([test_df, tracado_dummies_test], axis=1)
+
+## -- DROP --
+train_df.drop(columns='tracado_via', inplace=True)
+test_df.drop(columns='tracado_via', inplace=True)
+
+cols_to_drop = []
+for col in tracado_dummies_train.columns:
+    # print('------', col)
+    rate = train_df[col].sum()/train_df.shape[0]
+    # print(rate)
+    if rate < 0.05:
+        cols_to_drop.append(col)
+
+# print(cols_to_drop)
+# ['desvio_temporario', 'em_obras', 'ponte', 'retorno_regulamentado', 'rotatoria', 'tunel', 'viaduto']
+
+train_df.drop(columns=cols_to_drop, inplace=True)
+test_df.drop(columns=cols_to_drop, inplace=True)
+
+# --------------------------------------------------------------------------------------------
 # --------------------------------------------------------------------------------------------
 # --------------------------------------------------------------------------------------------
 
 # Checando possíveis valores das colunas categóricas
 cat_cols = train_df.select_dtypes(include=['object']).columns
 
-print("-----------------------------------------")
-print("Colunas categóricas:\n", cat_cols)
-print("-----------------------------------------")
+# print("-----------------------------------------")
+# print("Colunas categóricas:\n", cat_cols)
+# print("-----------------------------------------")
 
-# Checando valores em cada coluna categórica
-for n, col in enumerate(cat_cols):
-    print(f"\n{n+1}. Coluna '{col}' valores:")
-    print("--", train_df[col].dtype)
-    # print(train_df[col].unique())
-    print(train_df[col].value_counts(normalize=True))
+# # Checando valores em cada coluna categórica
+# for n, col in enumerate(cat_cols):
+#     print(f"\n{n+1}. Coluna '{col}' valores:")
+#     print("--", train_df[col].dtype)
+#     # print(train_df[col].unique())
+#     print(train_df[col].value_counts(normalize=True))
+
+# --------------------------------------------------------------------------------------------
+# ------------------------------------------ COLUNAS -----------------------------------------
+# ----- ['uf', 'causa_acidente', 'tipo_acidente', 'fase_dia', --------------------------------
+# ----- 'sentido_via', 'condicao_metereologica', 'tipo_pista', 'uop'] ------------------------
+# --------------------------------------------------------------------------------------------
+
+rare_enc = RareLabelEncoder(tol=0.03, n_categories=1, variables=list(cat_cols))
+
+train_df = rare_enc.fit_transform(train_df)
+test_df = rare_enc.transform(test_df)
+
+ohe_enc = OneHotEncoder(sparse_output=False).set_output(transform='pandas')
+
+train_ohe = ohe_enc.fit_transform(train_df[cat_cols])
+test_ohe = ohe_enc.transform(test_df[cat_cols])
+
+train_df.drop(columns=cat_cols, inplace=True)
+test_df.drop(columns=cat_cols, inplace=True)
+
+train_df = pd.concat([train_df, train_ohe], axis=1)
+test_df = pd.concat([test_df, test_ohe], axis=1)
+
 # %%
