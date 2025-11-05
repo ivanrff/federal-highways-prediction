@@ -24,48 +24,51 @@ import numpy as np
 pd.set_option('display.max_columns', 500)
 
 datatran2025 = pd.read_csv("data/datatran2025.csv", sep=';', encoding='latin1')
+datatran2024 = pd.read_csv("data/datatran2024.csv", sep=';', encoding='latin1')
 
-# print(f"--\nShape da df: {datatran2025.shape}\n--")
+datatran = pd.concat([datatran2025, datatran2024], axis=0)
+
+# print(f"--\nShape da df: {datatran.shape}\n--")
 
 # Buscando por valores vazios
-for col in datatran2025.columns:
-    n_empty_rows = datatran2025[col].isna().sum()
+for col in datatran.columns:
+    n_empty_rows = datatran[col].isna().sum()
 
     # if n_empty_rows > 0:
     #     print(f"Column {col}: {n_empty_rows} empty rows")
 
 # Dropando as poucas linhas que têm valor vazio
-datatran2025.dropna(how='any', inplace=True)
+datatran.dropna(how='any', inplace=True)
 # print('[!] Colunas vazias removidas\n--')
 
 # # Checando possíveis valores das colunas categóricas
-# cat_cols = datatran2025.select_dtypes(exclude=['int64'])
+# cat_cols = datatran.select_dtypes(exclude=['int64'])
 
 # # Checando valores em cada coluna categórica
 # for col in cat_cols:
 #     print(f"Coluna '{col}' valores:")
-#     # print("--", datatran2025[col].dtype)
-#     print("--", datatran2025[col].unique())
+#     # print("--", datatran[col].dtype)
+#     print("--", datatran[col].unique())
 
 # Criando coluna timestamp a partir de data_inversa e horario
-datatran2025['timestamp'] = datatran2025['data_inversa'] + ' ' + datatran2025['horario']
-datatran2025['timestamp'] = pd.to_datetime(datatran2025['timestamp'], format="%Y-%m-%d %H:%M:%S")
+datatran['timestamp'] = datatran['data_inversa'] + ' ' + datatran['horario']
+datatran['timestamp'] = pd.to_datetime(datatran['timestamp'], format="%Y-%m-%d %H:%M:%S")
 
 
 ## -- DROP --
-datatran2025.drop(columns=['data_inversa', 'horario'], inplace=True)
+datatran.drop(columns=['data_inversa', 'horario'], inplace=True)
 
 # Algumas colunas numéricas estão como objeto por estarem com , em vez de .
 num_cols_with_comma = ['km', 'latitude', 'longitude']
 
 for col in num_cols_with_comma:
-    datatran2025[col] = datatran2025[col].apply(lambda x: x.replace(',', '.'))
-    datatran2025[col] = datatran2025[col].astype('float64')
+    datatran[col] = datatran[col].astype(str).str.replace(',', '.', regex=False)
+    datatran[col] = pd.to_numeric(datatran[col], errors='raise')
 
-# print(datatran2025[num_cols_with_comma].info(), "\n--") # OK
+# print(datatran[num_cols_with_comma].info(), "\n--") # OK
 
 # Tratando a coluna tracado_via (transformando com OHE)
-tracado_dummies = datatran2025['tracado_via'].str.get_dummies(sep=';')
+tracado_dummies = datatran['tracado_via'].str.get_dummies(sep=';')
 
 tracado_dummies.columns = [
         'tracado_' + col.strip()
@@ -80,10 +83,10 @@ tracado_dummies.columns = [
         for col in tracado_dummies.columns
     ]
 
-datatran2025 = pd.concat([datatran2025, tracado_dummies], axis=1)
+datatran = pd.concat([datatran, tracado_dummies], axis=1)
 
 ## -- DROP --
-datatran2025.drop(columns='tracado_via', inplace=True)
+datatran.drop(columns='tracado_via', inplace=True)
 
 # mapeando os dias da semana de forma cíclica
 day_mapping = {
@@ -95,32 +98,32 @@ day_mapping = {
     'sexta-feira': 5,
     'sábado': 6
 }
-datatran2025['dia_numerico'] = datatran2025['dia_semana'].str.lower().map(day_mapping)
+datatran['dia_numerico'] = datatran['dia_semana'].str.lower().map(day_mapping)
 
-datatran2025['dia_semana_sin'] = np.sin(2 * np.pi * datatran2025['dia_numerico'] / 7)
-datatran2025['dia_semana_cos'] = np.cos(2 * np.pi * datatran2025['dia_numerico'] / 7)
+datatran['dia_semana_sin'] = np.sin(2 * np.pi * datatran['dia_numerico'] / 7)
+datatran['dia_semana_cos'] = np.cos(2 * np.pi * datatran['dia_numerico'] / 7)
 
 ## -- DROP --
-datatran2025.drop(columns=['dia_numerico', 'dia_semana'], axis=1, inplace=True)
+datatran.drop(columns=['dia_numerico', 'dia_semana'], axis=1, inplace=True)
 
 # Remover municipio (muita granularidade)
 # uop vs. delegacia vs. regional
 # Escolher uma para OHE e remover as outras
 ## -- DROP --
-datatran2025.drop(columns=['municipio', 'delegacia', 'regional'], axis=1, inplace=True)
+datatran.drop(columns=['municipio', 'delegacia', 'regional'], axis=1, inplace=True)
 
-uop_regional_dummies = pd.get_dummies(datatran2025[['uop', 'uf']])
-datatran2025 = pd.concat([datatran2025, uop_regional_dummies], axis=1)
+uop_regional_dummies = pd.get_dummies(datatran[['uop', 'uf']])
+datatran = pd.concat([datatran, uop_regional_dummies], axis=1)
 
 ## -- DROP --
-datatran2025.drop(columns=['uop', 'uf'], axis=1, inplace=True)
+datatran.drop(columns=['uop', 'uf'], axis=1, inplace=True)
 
 # Checando possíveis valores das colunas categóricas
-cat_cols = datatran2025.select_dtypes(exclude=['int64', 'float64', 'datetime64[ns]', 'bool'])
+cat_cols = datatran.select_dtypes(include=['object'])
 
 # Checando valores em cada coluna categórica
 for col in cat_cols:
     print(f"Coluna '{col}' valores:")
-    print("--", datatran2025[col].dtype)
-    print(datatran2025[col].unique())
+    print("--", datatran[col].dtype)
+    print(datatran[col].unique())
 # %%
