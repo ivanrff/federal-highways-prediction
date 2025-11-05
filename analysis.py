@@ -176,6 +176,20 @@ tracado_dummies = datatran['tracado_via'].str.get_dummies(sep=';')
 
 datatran_tv = pd.concat([datatran[['tracado_via']], tracado_dummies], axis=1)
 
+cols_to_drop = []
+for col in tracado_dummies.columns:
+    print('------', col)
+    rate = datatran_tv[col].sum()/datatran_tv.shape[0]
+    print(rate)
+    if rate < 0.05:
+        cols_to_drop.append(col)
+
+# print(cols_to_drop)
+# ['desvio_temporario', 'em_obras', 'ponte', 'retorno_regulamentado', 'rotatoria', 'tunel', 'viaduto']
+
+datatran.drop(columns=cols_to_drop, inplace=True)
+# %%
+
 # --------------------------------------------------------------------------------------------
 # ------------------- COLUNAS municipio, delegacia, regional, uop, uf ------------------------
 # --------------------------------------------------------------------------------------------
