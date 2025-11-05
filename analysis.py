@@ -118,6 +118,10 @@ datatran = pd.concat([datatran, uop_regional_dummies], axis=1)
 ## -- DROP --
 datatran.drop(columns=['uop', 'uf'], axis=1, inplace=True)
 
+# Tratamento de uso_solo
+datatran['uso_solo'] = datatran['uso_solo'].replace({'Sim': 1, 'Não': 0})
+# datatran['uso_solo'].value_counts(normalize=True) # ({0: 0.569314, 1: 0.430686})
+
 # Checando possíveis valores das colunas categóricas
 cat_cols = datatran.select_dtypes(include=['object'])
 
