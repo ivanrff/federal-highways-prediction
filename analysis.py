@@ -174,13 +174,13 @@ datatran['tracado_via'] = datatran['tracado_via'].apply(lambda x: x.strip()
 # Tratando a coluna tracado_via (transformando com OHE)
 tracado_dummies = datatran['tracado_via'].str.get_dummies(sep=';')
 
-datatran_tv = pd.concat([datatran[['tracado_via']], tracado_dummies], axis=1)
+datatran = pd.concat([datatran, tracado_dummies], axis=1)
 
 cols_to_drop = []
 for col in tracado_dummies.columns:
-    print('------', col)
-    rate = datatran_tv[col].sum()/datatran_tv.shape[0]
-    print(rate)
+    # print('------', col)
+    rate = datatran[col].sum()/datatran.shape[0]
+    # print(rate)
     if rate < 0.05:
         cols_to_drop.append(col)
 
