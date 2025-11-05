@@ -20,15 +20,28 @@
 
 import pandas as pd
 import numpy as np
+from feature_engine.encoding import RareLabelEncoder
+from sklearn.preprocessing import OneHotEncoder
 
-pd.set_option('display.max_columns', 500)
+# Set max rows to display all rows
+pd.set_option('display.max_rows', 30)
+
+pd.set_option('display.max_columns', 20)
 
 datatran2025 = pd.read_csv("data/datatran2025.csv", sep=';', encoding='latin1')
 datatran2024 = pd.read_csv("data/datatran2024.csv", sep=';', encoding='latin1')
 
 datatran = pd.concat([datatran2025, datatran2024], axis=0)
 
+del datatran2024, datatran2025
+
 # print(f"--\nShape da df: {datatran.shape}\n--")
+# for col in datatran.columns:
+#     print(col)
+
+# --------------------------------------------------------------------------------------------
+# --------------------------------------- DADOS NULOS ----------------------------------------
+# --------------------------------------------------------------------------------------------
 
 # Buscando por valores vazios
 for col in datatran.columns:
@@ -41,14 +54,46 @@ for col in datatran.columns:
 datatran.dropna(how='any', inplace=True)
 # print('[!] Colunas vazias removidas\n--')
 
+# --------------------------------------------------------------------------------------------
+# ---------------------------------- DADOS DUPLICADOS ----------------------------------------
+# --------------------------------------------------------------------------------------------
+
+# print(f'{datatran.duplicated().sum()} linhas duplicadas.\n')
+
+# --------------------------------------------------------------------------------------------
+# -------------------------------------- COLUNA TARGET ---------------------------------------
+# --------------------------------------------------------------------------------------------
+
+datatran['risco_grave'] = ((datatran['mortos'] > 0) | (datatran['feridos_graves'] > 0)).astype(int)
+
+# - `pessoas`: número de pessoas envolvidas
+# - `mortos`: número de mortos
+# - `feridos_leves`: número de feridos leves
+# - `feridos_graves`: número de feridos graves
+# - `ilesos`: número de ilesos
+# - `ignorados`: total de pessoas envolvidas na ocorrência e que não se soube o estado físico.
+# - `feridos`: total de feridos
+# - `veiculos`: veículos envolvidos
+
+datatran.drop(columns=["mortos", "feridos_leves", "feridos_graves", "ilesos", "ignorados", "feridos",
+                       "classificacao_acidente"], inplace=True)
+
+# --------------------------------------------------------------------------------------------
+# ------------------------------ TRATAMENTO COLUNAS CATEGÓRICAS ------------------------------
+# --------------------------------------------------------------------------------------------
+
 # # Checando possíveis valores das colunas categóricas
-# cat_cols = datatran.select_dtypes(exclude=['int64'])
+# cat_cols = datatran.select_dtypes(include=['object']).columns
 
 # # Checando valores em cada coluna categórica
 # for col in cat_cols:
 #     print(f"Coluna '{col}' valores:")
 #     # print("--", datatran[col].dtype)
 #     print("--", datatran[col].unique())
+
+# --------------------------------------------------------------------------------------------
+# ------------------------------ COLUNAS data_inversa, horario -------------------------------
+# --------------------------------------------------------------------------------------------
 
 # Criando coluna timestamp a partir de data_inversa e horario
 datatran['timestamp'] = datatran['data_inversa'] + ' ' + datatran['horario']
@@ -57,6 +102,11 @@ datatran['timestamp'] = pd.to_datetime(datatran['timestamp'], format="%Y-%m-%d %
 
 ## -- DROP --
 datatran.drop(columns=['data_inversa', 'horario'], inplace=True)
+
+
+# --------------------------------------------------------------------------------------------
+# ----------------------------- COLUNAS km, latitude, longitude ------------------------------
+# --------------------------------------------------------------------------------------------
 
 # Algumas colunas numéricas estão como objeto por estarem com , em vez de .
 num_cols_with_comma = ['km', 'latitude', 'longitude']
@@ -67,26 +117,10 @@ for col in num_cols_with_comma:
 
 # print(datatran[num_cols_with_comma].info(), "\n--") # OK
 
-# Tratando a coluna tracado_via (transformando com OHE)
-tracado_dummies = datatran['tracado_via'].str.get_dummies(sep=';')
 
-tracado_dummies.columns = [
-        'tracado_' + col.strip()
-                        .replace(' ', '_')
-                        .lower()
-                        .replace('ã', 'a')
-                        .replace('á', 'a')
-                        .replace('ó', 'o')
-                        .replace('ú', 'u')
-                        .replace('ç', 'c')
-                        .replace('_de_vias', '')
-        for col in tracado_dummies.columns
-    ]
-
-datatran = pd.concat([datatran, tracado_dummies], axis=1)
-
-## -- DROP --
-datatran.drop(columns='tracado_via', inplace=True)
+# --------------------------------------------------------------------------------------------
+# ---------------------------------- COLUNA dia_semana ---------------------------------------
+# --------------------------------------------------------------------------------------------
 
 # mapeando os dias da semana de forma cíclica
 day_mapping = {
@@ -106,28 +140,73 @@ datatran['dia_semana_cos'] = np.cos(2 * np.pi * datatran['dia_numerico'] / 7)
 ## -- DROP --
 datatran.drop(columns=['dia_numerico', 'dia_semana'], axis=1, inplace=True)
 
+
+# --------------------------------------------------------------------------------------------
+# ------------------------------------- COLUNA uso_solo --------------------------------------
+# --------------------------------------------------------------------------------------------
+
+# Tratamento de uso_solo
+datatran['uso_solo'] = datatran['uso_solo'].replace({'Sim': 1, 'Não': 0}).astype('int64')
+# datatran['uso_solo'].value_counts(normalize=True) # ({0: 0.569314, 1: 0.430686})
+
+# --------------------------------------------------------------------------------------------
+# ---------------------------------- COLUNA tracado_via --------------------------------------
+# --------------------------------------------------------------------------------------------
+
+datatran['tracado_via'] = datatran['tracado_via'].apply(lambda x: x.strip()
+                                                                    .replace(' ', '_')
+                                                                    .lower()
+                                                                    .replace('ã', 'a')
+                                                                    .replace('á', 'a')
+                                                                    .replace('ó', 'o')
+                                                                    .replace('ú', 'u')
+                                                                    .replace('ç', 'c')
+                                                                    .replace('_de_vias', ''))
+
+# # Tratando a coluna tracado_via (transformando com OHE)
+# tracado_dummies = datatran['tracado_via'].str.get_dummies(sep=';')
+
+# datatran = pd.concat([datatran, tracado_dummies], axis=1)
+
+# ## -- DROP --
+# datatran.drop(columns='tracado_via', inplace=True)
+
+# Tratando a coluna tracado_via (transformando com OHE)
+tracado_dummies = datatran['tracado_via'].str.get_dummies(sep=';')
+
+datatran_tv = pd.concat([datatran[['tracado_via']], tracado_dummies], axis=1)
+
+# --------------------------------------------------------------------------------------------
+# ------------------- COLUNAS municipio, delegacia, regional, uop, uf ------------------------
+# --------------------------------------------------------------------------------------------
+
 # Remover municipio (muita granularidade)
 # uop vs. delegacia vs. regional
 # Escolher uma para OHE e remover as outras
 ## -- DROP --
 datatran.drop(columns=['municipio', 'delegacia', 'regional'], axis=1, inplace=True)
 
-uop_regional_dummies = pd.get_dummies(datatran[['uop', 'uf']])
-datatran = pd.concat([datatran, uop_regional_dummies], axis=1)
+# uop_regional_dummies = pd.get_dummies(datatran[['uop', 'uf']])
+# datatran = pd.concat([datatran, uop_regional_dummies], axis=1)
 
-## -- DROP --
-datatran.drop(columns=['uop', 'uf'], axis=1, inplace=True)
+# ## -- DROP --
+# datatran.drop(columns=['uop', 'uf'], axis=1, inplace=True)
 
-# Tratamento de uso_solo
-datatran['uso_solo'] = datatran['uso_solo'].replace({'Sim': 1, 'Não': 0})
-# datatran['uso_solo'].value_counts(normalize=True) # ({0: 0.569314, 1: 0.430686})
+# --------------------------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------------
 
 # Checando possíveis valores das colunas categóricas
-cat_cols = datatran.select_dtypes(include=['object'])
+cat_cols = datatran.select_dtypes(include=['object']).columns
+
+print("-----------------------------------------")
+print("Colunas categóricas:\n", cat_cols)
+print("-----------------------------------------")
 
 # Checando valores em cada coluna categórica
-for col in cat_cols:
-    print(f"Coluna '{col}' valores:")
+for n, col in enumerate(cat_cols):
+    print(f"\n{n+1}. Coluna '{col}' valores:")
     print("--", datatran[col].dtype)
-    print(datatran[col].unique())
+    # print(datatran[col].unique())
+    print(datatran[col].value_counts(normalize=True))
 # %%
