@@ -84,13 +84,13 @@ train_df, test_df = train_test_split(datatran, stratify=datatran['risco_grave'],
 def print_distr(y):
     print(f'Distribuição da variável target: {y.sum()/len(y)}')
 
-print('TREINO')
-print(train_df.shape)
-print_distr(train_df['risco_grave'])
-print('TESTE')
-print(test_df.shape)
-print_distr(test_df['risco_grave'])
-print("-------------------------\n")
+# print('TREINO')
+# print(train_df.shape)
+# print_distr(train_df['risco_grave'])
+# print('TESTE')
+# print(test_df.shape)
+# print_distr(test_df['risco_grave'])
+# print("-------------------------\n")
 
 # --------------------------------------------------------------------------------------------
 # ------------------------------ TRATAMENTO COLUNAS CATEGÓRICAS ------------------------------
@@ -293,4 +293,29 @@ test_df.drop(columns=cat_cols, inplace=True)
 train_df = pd.concat([train_df, train_ohe], axis=1)
 test_df = pd.concat([test_df, test_ohe], axis=1)
 
+# --------------------------------------------------------------------------------------------
+# ----------------------- ver o que tirar de feature de timestamp ----------------------------
+# --------------------------------------------------------------------------------------------
+
+train_df.drop(columns='timestamp', inplace=True)
+test_df.drop(columns='timestamp', inplace=True)
+# %%
+
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import GridSearchCV
+from sklearn.metrics import confusion_matrix
+
+X = train_df.drop(columns='risco_grave')
+y = train_df['risco_grave']
+
+param_grid = {'max_depth': [2, 5, 10]}
+
+rf_gs = GridSearchCV(estimator=RandomForestClassifier(random_state=42),
+                     param_grid=param_grid,
+                     n_jobs=-1,
+                     refit=True,
+                     cv=5,
+                     )
+
+rf_gs.fit(X, y)
 # %%
