@@ -79,32 +79,6 @@ datatran['risco_grave'] = ((datatran['mortos'] > 0) | (datatran['feridos_graves'
 datatran.drop(columns=["mortos", "feridos_leves", "feridos_graves", "ilesos", "ignorados", "feridos",
                        "classificacao_acidente"], inplace=True)
 
-train_df, test_df = train_test_split(datatran, test_size=0.1, random_state=17)
-
-def print_distr(y):
-    print(f'Distribuição da variável target: {y.sum()/len(y)}')
-
-print('TREINO')
-print(train_df.shape)
-print(train_df['risco_grave'].sum())
-print_distr(train_df['risco_grave'])
-# print('TESTE')
-# print(test_df.shape)
-# print_distr(test_df['risco_grave'])
-# print("-------------------------\n")
-
-# --------------------------------------------------------------------------------------------
-# ------------------------------ TRATAMENTO COLUNAS CATEGÓRICAS ------------------------------
-# --------------------------------------------------------------------------------------------
-
-# # Checando possíveis valores das colunas categóricas
-# cat_cols = datatran.select_dtypes(include=['object']).columns
-
-# # Checando valores em cada coluna categórica
-# for col in cat_cols:
-#     print(f"Coluna '{col}' valores:")
-#     # print("--", datatran[col].dtype)
-#     print("--", datatran[col].unique())
 
 # --------------------------------------------------------------------------------------------
 # ------------------------------ COLUNAS data_inversa, horario -------------------------------
@@ -122,8 +96,46 @@ def criar_timestamp(df):
 
     return new_df
 
-train_df = criar_timestamp(train_df)
-test_df = criar_timestamp(test_df)
+datatran = criar_timestamp(datatran)
+
+
+
+# --------------------------------------------------------------------------------------------
+# ------------------------------------- SPLIT DOS DATASETS -----------------------------------
+# --------------------------------------------------------------------------------------------
+
+oot_df = datatran[datatran['timestamp'] >= pd.to_datetime('2025-09-01 00:00:00')]
+datatran = datatran[datatran['timestamp'] < pd.to_datetime('2025-09-01 00:00:00')]
+
+train_df, test_df = train_test_split(datatran, test_size=0.1, random_state=17, stratify=datatran['risco_grave'])
+
+def print_distr(y):
+    print(f'Distribuição da variável target: {y.sum()/len(y)}')
+
+print('TREINO')
+print(train_df.shape)
+print(train_df['risco_grave'].sum())
+print_distr(train_df['risco_grave'])
+# print('TESTE')
+# print(test_df.shape)
+# print_distr(test_df['risco_grave'])
+# print("-------------------------\n")
+
+# %%
+
+# --------------------------------------------------------------------------------------------
+# ------------------------------ TRATAMENTO COLUNAS CATEGÓRICAS ------------------------------
+# --------------------------------------------------------------------------------------------
+
+# # Checando possíveis valores das colunas categóricas
+# cat_cols = datatran.select_dtypes(include=['object']).columns
+
+# # Checando valores em cada coluna categórica
+# for col in cat_cols:
+#     print(f"Coluna '{col}' valores:")
+#     # print("--", datatran[col].dtype)
+#     print("--", datatran[col].unique())
+
 
 # --------------------------------------------------------------------------------------------
 # ----------------------------- COLUNAS km, latitude, longitude ------------------------------
