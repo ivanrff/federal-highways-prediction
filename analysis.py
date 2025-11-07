@@ -79,14 +79,15 @@ datatran['risco_grave'] = ((datatran['mortos'] > 0) | (datatran['feridos_graves'
 datatran.drop(columns=["mortos", "feridos_leves", "feridos_graves", "ilesos", "ignorados", "feridos",
                        "classificacao_acidente"], inplace=True)
 
-train_df, test_df = train_test_split(datatran, stratify=datatran['risco_grave'], test_size=0.1)
+train_df, test_df = train_test_split(datatran, test_size=0.1, random_state=17)
 
 def print_distr(y):
     print(f'Distribuição da variável target: {y.sum()/len(y)}')
 
-# print('TREINO')
-# print(train_df.shape)
-# print_distr(train_df['risco_grave'])
+print('TREINO')
+print(train_df.shape)
+print(train_df['risco_grave'].sum())
+print_distr(train_df['risco_grave'])
 # print('TESTE')
 # print(test_df.shape)
 # print_distr(test_df['risco_grave'])
@@ -299,23 +300,48 @@ test_df = pd.concat([test_df, test_ohe], axis=1)
 
 train_df.drop(columns='timestamp', inplace=True)
 test_df.drop(columns='timestamp', inplace=True)
-# %%
 
 from sklearn.ensemble import RandomForestClassifier
+# from sklearn.linear_model import LogisticRegression 
 from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import confusion_matrix
+import seaborn as sns
+from time import time as now
+import matplotlib.pyplot as plt
 
-X = train_df.drop(columns='risco_grave')
-y = train_df['risco_grave']
+X_train = train_df.drop(columns='risco_grave')
+y_train = train_df['risco_grave']
 
-param_grid = {'max_depth': [2, 5, 10]}
+# print(f"{y_train.sum()/len(y_train):.4f}")
 
-rf_gs = GridSearchCV(estimator=RandomForestClassifier(random_state=42),
+param_grid = {'min_samples_leaf': [8, 10, 12],
+              'max_depth': [14, 15, 16, None]}
+
+rf_gs = GridSearchCV(estimator=RandomForestClassifier(random_state=42, class_weight='balanced'),
                      param_grid=param_grid,
                      n_jobs=-1,
+                     scoring='f1',
                      refit=True,
                      cv=5,
                      )
 
-rf_gs.fit(X, y)
+inicio = now()
+rf_gs.fit(X_train, y_train)
+fim =  now()
+
+tempo_treino = fim - inicio
+
+print(rf_gs.best_params_)
+if tempo_treino > 60:
+    print(f"Modelo treinado em {(tempo_treino)//60:.0f}m{(tempo_treino)%60:.0f}s")
+else:
+    print(f"Modelo treinado em {(tempo_treino):.0f}s")
+
+y_pred = rf_gs.predict(X_train)
+
+sns.heatmap(confusion_matrix(y_pred=y_pred, y_true=y_train), annot=True, cmap='Blues', fmt='.0f')
+plt.title('Confusion Matrix Heatmap')
+plt.xlabel('Predicted Label')
+plt.ylabel('True Label')
+plt.show()
 # %%
