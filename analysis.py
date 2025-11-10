@@ -33,6 +33,7 @@ datatran2025 = pd.read_csv("data/datatran2025.csv", sep=';', encoding='latin1')
 datatran2024 = pd.read_csv("data/datatran2024.csv", sep=';', encoding='latin1')
 
 datatran = pd.concat([datatran2025, datatran2024], axis=0)
+datatran = datatran.drop(columns='id')
 
 del datatran2024, datatran2025
 
@@ -114,14 +115,12 @@ def print_distr(y):
 
 print('TREINO')
 print(train_df.shape)
-print(train_df['risco_grave'].sum())
+print(train_df['risco_grave'].sum(), "linhas com risco grave/fatal")
 print_distr(train_df['risco_grave'])
 # print('TESTE')
 # print(test_df.shape)
 # print_distr(test_df['risco_grave'])
 # print("-------------------------\n")
-
-# %%
 
 # --------------------------------------------------------------------------------------------
 # ------------------------------ TRATAMENTO COLUNAS CATEGÓRICAS ------------------------------
@@ -313,6 +312,11 @@ test_df = pd.concat([test_df, test_ohe], axis=1)
 train_df.drop(columns='timestamp', inplace=True)
 test_df.drop(columns='timestamp', inplace=True)
 
+# --------------------------------------------------------------------------------------------
+# -------------------------------------- testar modelos --------------------------------------
+# --------------------------------------------------------------------------------------------
+
+
 from sklearn.ensemble import RandomForestClassifier
 # from sklearn.linear_model import LogisticRegression 
 from sklearn.model_selection import GridSearchCV
@@ -321,15 +325,74 @@ import seaborn as sns
 from time import time as now
 import matplotlib.pyplot as plt
 
+
+# X_train = train_df.drop(columns='risco_grave')
+# y_train = train_df['risco_grave']
+
+# print(f"{y_train.sum()/len(y_train):.4f}")
+
+# param_grid = {'n_estimators': [100, 200],
+#               'min_samples_leaf': [8, 10, 12],
+#               'max_depth': [14, 15, 16, None]}
+
+# rf_gs = GridSearchCV(estimator=RandomForestClassifier(random_state=42, class_weight='balanced'),
+#                      param_grid=param_grid,
+#                      n_jobs=-1,
+#                      scoring='f1',
+#                      refit=True,
+#                      cv=5,
+#                      )
+
+# inicio = now()
+# rf_gs.fit(X_train, y_train)
+# fim =  now()
+
+# tempo_treino = fim - inicio
+
+# print(rf_gs.best_params_)
+# if tempo_treino > 60:
+#     print(f"Modelo treinado em {(tempo_treino)//60:.0f}m{(tempo_treino)%60:.0f}s")
+# else:
+#     print(f"Modelo treinado em {(tempo_treino):.0f}s")
+
+# y_pred = rf_gs.predict(X_train)
+
+# sns.heatmap(confusion_matrix(y_pred=y_pred, y_true=y_train), annot=True, cmap='Blues', fmt='.0f')
+# plt.title('Confusion Matrix Heatmap')
+# plt.xlabel('Predicted Label')
+# plt.ylabel('True Label')
+# plt.show()
+
+
+# --------------------------------------------------------------------------------------------
+# ------------------------------------ testar undersampling ----------------------------------
+# --------------------------------------------------------------------------------------------
+
+
+true_target = train_df[train_df['risco_grave'] == 1]
+false_target = train_df[train_df['risco_grave'] == 0]
+
+print('True target', (true_target.shape))
+print('False target', (false_target.shape))
+
+false_target = false_target.sample(n=true_target.shape[0], random_state=17)
+
+print("Novo false target", (false_target.shape))
+
+train_df = pd.concat([true_target, false_target], axis=0)
+
+# ----------------------------
+
 X_train = train_df.drop(columns='risco_grave')
 y_train = train_df['risco_grave']
 
 # print(f"{y_train.sum()/len(y_train):.4f}")
 
-param_grid = {'min_samples_leaf': [8, 10, 12],
+param_grid = {'n_estimators': [100, 200],
+              'min_samples_leaf': [8, 10, 12],
               'max_depth': [14, 15, 16, None]}
 
-rf_gs = GridSearchCV(estimator=RandomForestClassifier(random_state=42, class_weight='balanced'),
+rf_gs = GridSearchCV(estimator=RandomForestClassifier(random_state=42),
                      param_grid=param_grid,
                      n_jobs=-1,
                      scoring='f1',
@@ -351,9 +414,28 @@ else:
 
 y_pred = rf_gs.predict(X_train)
 
+# %%
+
 sns.heatmap(confusion_matrix(y_pred=y_pred, y_true=y_train), annot=True, cmap='Blues', fmt='.0f')
 plt.title('Confusion Matrix Heatmap')
 plt.xlabel('Predicted Label')
 plt.ylabel('True Label')
 plt.show()
+
+sns.heatmap(confusion_matrix(y_pred=y_pred, y_true=y_train, normalize='true'), annot=True, cmap='Blues', fmt='.0%')
+plt.title('Confusion Matrix Heatmap')
+plt.xlabel('Predicted Label')
+plt.ylabel('True Label')
+plt.show()
+
+feature_importances = pd.DataFrame([X_train.columns, rf_gs.best_estimator_.feature_importances_]).T
+
+feature_importances.columns = ['coluna', 'importancia']
+
+feature_importances = feature_importances.sort_values(by='importancia', ascending=False)
+
+pd.set_option('display.max_rows', None)
+
 # %%
+
+pd.set_option('display.max_rows', 20)
