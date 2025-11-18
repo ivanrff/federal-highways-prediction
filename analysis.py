@@ -461,3 +461,53 @@ feature_importances.columns = ['coluna', 'importancia']
 feature_importances = feature_importances.sort_values(by='importancia', ascending=False)
 
 # %%
+def plot_roc_auc(y_true, y_score, label=None, savepath=None):
+    """Plota a curva ROC e calcula a AUC.
+
+    Args:
+        y_true (array-like): rótulos verdadeiros (0/1).
+        y_score (array-like): probabilidades preditas para a classe positiva.
+        label (str, optional): rótulo para a curva (ex: 'Train', 'Test').
+        savepath (str, optional): caminho para salvar a figura (PNG). Se None, não salva.
+
+    Returns:
+        float: valor da AUC calculada.
+    """
+    fpr, tpr, _ = roc_curve(y_true, y_score)
+    roc_auc = auc(fpr, tpr)
+
+    plt.figure(figsize=(6, 6))
+    curve_label = f"{label} (AUC = {roc_auc:.3f})" if label else f"AUC = {roc_auc:.3f}"
+    plt.plot(fpr, tpr, lw=2, label=curve_label)
+    plt.plot([0, 1], [0, 1], color='navy', lw=1, linestyle='--', alpha=0.6)
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('ROC Curve')
+    plt.legend(loc='lower right')
+    if savepath:
+        os.makedirs(os.path.dirname(savepath), exist_ok=True)
+        plt.savefig(savepath, dpi=150, bbox_inches='tight')
+    plt.show()
+    return roc_auc
+
+# --------------------------------- ROC AUC (Train + Test) ---------------------------------
+# Preparar diretório para salvar gráficos
+# os.makedirs('reports', exist_ok=True)
+
+# Probabilidades no conjunto de treino
+y_score_train = rf_gs.best_estimator_.predict_proba(X_train)[:, 1]
+roc_train = plot_roc_auc(y_train, y_score_train, label='Train')
+print(f'Train ROC AUC: {roc_train:.4f}')
+
+# Preparar conjunto de teste (garantir mesmas colunas)
+X_test = test_df.drop(columns='risco_grave')
+y_test = test_df['risco_grave']
+X_test = X_test.reindex(columns=X_train.columns, fill_value=0)
+
+y_score_test = rf_gs.best_estimator_.predict_proba(X_test)[:, 1]
+roc_test = plot_roc_auc(y_test, y_score_test, label='Test')
+print(f'Test ROC AUC: {roc_test:.4f}')
+
+# %%
