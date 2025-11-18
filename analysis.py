@@ -289,6 +289,10 @@ cat_cols = train_df.select_dtypes(include=['object']).columns
 # ----- 'sentido_via', 'condicao_metereologica', 'tipo_pista', 'uop'] ------------------------
 # --------------------------------------------------------------------------------------------
 
+# remover tipo_acidente e causa_acidente (informação não conhecida no momento da predição)
+train_df.drop(columns=['tipo_acidente', 'causa_acidente'], axis=1, inplace=True)
+test_df.drop(columns=['tipo_acidente', 'causa_acidente'], axis=1, inplace=True)
+
 rare_enc = RareLabelEncoder(tol=0.03, n_categories=1, variables=list(cat_cols))
 
 train_df = rare_enc.fit_transform(train_df)
@@ -313,6 +317,27 @@ train_df.drop(columns='timestamp', inplace=True)
 test_df.drop(columns='timestamp', inplace=True)
 
 # --------------------------------------------------------------------------------------------
+# ------------------------------------ analise bivariada -------------------------------------
+# --------------------------------------------------------------------------------------------
+# bool_cols = []
+# for col in train_df.columns:
+#     if train_df[col].max() == 1 \
+#         and train_df[col].min() == 0 \
+#         and train_df[col].nunique() == 2:
+#             bool_cols.append(col)
+# # %%
+
+
+# num_cols = train_df.select_dtypes()
+
+pd.set_option('display.max_rows', None)
+
+bivariada = train_df.groupby('risco_grave').mean().T
+bivariada['ratio'] = (bivariada[1] + 0.0001) / (bivariada[0]+ 0.0001)
+bivariada = bivariada.sort_values(by='ratio', ascending=False)
+bivariada
+# %%
+# --------------------------------------------------------------------------------------------
 # -------------------------------------- testar modelos --------------------------------------
 # --------------------------------------------------------------------------------------------
 
@@ -320,11 +345,12 @@ test_df.drop(columns='timestamp', inplace=True)
 from sklearn.ensemble import RandomForestClassifier
 # from sklearn.linear_model import LogisticRegression 
 from sklearn.model_selection import GridSearchCV
-from sklearn.metrics import confusion_matrix
+from sklearn.metrics import confusion_matrix, roc_curve, auc
 import seaborn as sns
 from time import time as now
 import matplotlib.pyplot as plt
-
+import os
+# %% 
 
 # X_train = train_df.drop(columns='risco_grave')
 # y_train = train_df['risco_grave']
@@ -434,8 +460,4 @@ feature_importances.columns = ['coluna', 'importancia']
 
 feature_importances = feature_importances.sort_values(by='importancia', ascending=False)
 
-pd.set_option('display.max_rows', None)
-
 # %%
-
-pd.set_option('display.max_rows', 20)
