@@ -49,13 +49,13 @@ del datatran2024, datatran2025
 for col in datatran.columns:
     n_empty_rows = datatran[col].isna().sum()
 
-    # if n_empty_rows > 0:
-    #     print(f"Column {col}: {n_empty_rows} empty rows")
+    if n_empty_rows > 0:
+        print(f"Column {col}: {n_empty_rows} empty rows")
 
 # Dropando as poucas linhas que têm valor vazio
 datatran.dropna(how='any', inplace=True)
 # print('[!] Colunas vazias removidas\n--')
-
+# %%
 # --------------------------------------------------------------------------------------------
 # ---------------------------------- DADOS DUPLICADOS ----------------------------------------
 # --------------------------------------------------------------------------------------------
@@ -292,6 +292,7 @@ cat_cols = train_df.select_dtypes(include=['object']).columns
 # remover tipo_acidente e causa_acidente (informação não conhecida no momento da predição)
 train_df.drop(columns=['tipo_acidente', 'causa_acidente'], axis=1, inplace=True)
 test_df.drop(columns=['tipo_acidente', 'causa_acidente'], axis=1, inplace=True)
+cat_cols = train_df.select_dtypes(include=['object']).columns
 
 rare_enc = RareLabelEncoder(tol=0.03, n_categories=1, variables=list(cat_cols))
 
