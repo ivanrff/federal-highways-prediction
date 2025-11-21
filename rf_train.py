@@ -54,7 +54,7 @@ def remover_colunas_irrelevantes(df):
         "ignorados", "feridos", "classificacao_acidente",
         "municipio", "delegacia", "regional",
         "tipo_acidente", "causa_acidente",
-        "id", "timestamp"
+        "id", "timestamp", "pessoas", "veiculos"
     ])
 
 
@@ -201,6 +201,9 @@ datatran = criar_timestamp(datatran)
 cut_date = pd.to_datetime("2025-09-01")
 oot_df = preprocess(datatran[datatran["timestamp"] >= cut_date])
 datatran = preprocess(datatran[datatran["timestamp"] < cut_date])
+
+datatran
+# %%
 
 # Train/Test Split
 train_df, test_df = train_test_split(

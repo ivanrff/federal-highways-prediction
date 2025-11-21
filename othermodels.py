@@ -16,6 +16,14 @@ from sklearn.metrics import confusion_matrix, roc_curve, auc
 import matplotlib.pyplot as plt
 import seaborn as sns
 from feature_engine.encoding import RareLabelEncoder
+from tqdm import tqdm
+import warnings
+
+warnings.filterwarnings(
+    "ignore", 
+    message="This Pipeline instance is not fitted yet.", 
+    category=FutureWarning
+)
 
 
 # ===============================================================
@@ -42,6 +50,11 @@ def criar_timestamp(df):
     df.drop(columns=['data_inversa', 'horario'], inplace=True)
     return df
 
+def criar_colunas_tempo(df):
+    df = df.copy()
+    df['mes'] = df['timestamp'].dt.month
+
+    return df
 
 def limpar_nulos(df):
     df = df.copy()
@@ -55,7 +68,7 @@ def remover_colunas_irrelevantes(df):
         "ignorados", "feridos", "classificacao_acidente",
         "municipio", "delegacia", "regional",
         "tipo_acidente", "causa_acidente",
-        "id", "timestamp"
+        "id", "timestamp", "veiculos"
     ])
 
 
@@ -85,7 +98,7 @@ def processar_dia_semana(df):
 
 def processar_uso_solo(df):
     df = df.copy()
-    df['uso_solo'] = df['uso_solo'].replace({'Sim': 1, 'Não': 0}).astype(int)
+    df['uso_solo'] = df['uso_solo'].replace({'Sim': '1', 'Não': '0'}).astype(int)
     return df
 
 
@@ -108,6 +121,7 @@ def converter_booleans(df):
 def preprocess(df):
     df = criar_target(df)
     df = limpar_nulos(df)
+    df = criar_colunas_tempo(df)
     df = remover_colunas_irrelevantes(df)
     df = processar_km_lat_lon(df)
     df = processar_dia_semana(df)
@@ -145,8 +159,10 @@ def criar_preprocessor(train_df):
     cat_cols = train_df.select_dtypes(include="object").columns.tolist()
     cat_cols.remove("tracado_via")
 
-    num_cols = train_df.select_dtypes(include=["int64", "float64", "bool"]).columns.tolist()
-    num_cols.remove("risco_grave")      # target não entra
+    bool_cols = [c for c in train_df.select_dtypes("bool").columns if c != "risco_grave"]
+
+    num_cols = train_df.select_dtypes(include=["int64", "float64"]).columns.tolist()
+    # num_cols.remove("risco_grave")      # target não entra
     # E remover colunas que serão tratadas nos pipelines categóricos:
     num_cols = [c for c in num_cols if "tracado_via" not in c]
 
@@ -168,8 +184,8 @@ def criar_preprocessor(train_df):
             ("cat", cat_pipeline, cat_cols),
             ("tracado", tracado_pipeline, ["tracado_via"]),
             ("num", num_pipeline, num_cols),
-        ],
-        remainder="passthrough"
+            ("bool", "passthrough", bool_cols)
+        ]
     )
 
     return pre
@@ -216,38 +232,32 @@ cut_date = pd.to_datetime("2025-09-01")
 oot_df = preprocess(datatran[datatran["timestamp"] >= cut_date])
 datatran = preprocess(datatran[datatran["timestamp"] < cut_date])
 
+# Balanceamento
+y_col = "risco_grave"
+datatran = balancear_dataset(datatran, y_col)
+
+# Criação de X e y
+X = datatran.drop(columns=y_col)
+y = datatran[y_col]
+
 # Train/Test Split
-train_df, test_df = train_test_split(
-    datatran, test_size=0.1, random_state=17,
-    stratify=datatran["risco_grave"]
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.1, random_state=17,
+    stratify=y
 )
 
 # Pipeline de encoding
-preprocessor = criar_preprocessor(train_df)
+preprocessor = criar_preprocessor(X_train)
 
-train_df = pd.DataFrame(
-    preprocessor.fit_transform(train_df),
+X_train = pd.DataFrame(
+    preprocessor.fit_transform(X_train),
     columns=preprocessor.get_feature_names_out()
 )
 
-test_df = pd.DataFrame(
-    preprocessor.transform(test_df),
+X_test = pd.DataFrame(
+    preprocessor.transform(X_test),
     columns=preprocessor.get_feature_names_out()
 )
-
-# Converter colunas numéricas
-# train_df = train_df.apply(pd.to_numeric)
-# test_df = test_df.apply(pd.to_numeric)
-
-# Balanceamento
-y_col = "remainder__risco_grave"
-train_df = balancear_dataset(train_df, y_col)
-
-X_train = train_df.drop(columns=y_col)
-y_train = train_df[y_col]
-
-X_test = test_df.drop(columns=y_col)
-y_test = test_df[y_col]
 
 # Treinar modelo
 from sklearn.linear_model import LogisticRegression
@@ -256,63 +266,64 @@ from sklearn.tree import DecisionTreeClassifier
 from sklearn.naive_bayes import GaussianNB
 from sklearn.svm import SVC
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.metrics import roc_auc_score
-from sklearn.metrics import confusion_matrix
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 from sklearn.linear_model import LogisticRegression
-from sklearn.svm import SVC
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.ensemble import RandomForestClassifier, AdaBoostClassifier, GradientBoostingClassifier
 from xgboost import XGBClassifier
 from lightgbm import LGBMClassifier
-from catboost import CatBoostClassifier
+from sklearn.model_selection import cross_validate, KFold
+from sklearn.model_selection import StratifiedKFold
 
 modelos = {
-    "Logistic Regression": LogisticRegression(max_iter=1000),
-    # "SVM": SVC(probability=True),
+    "Logistic Regression": LogisticRegression(max_iter=2000),
+    # "SVC": SVC(kernel='rbf'),
     "KNN": KNeighborsClassifier(),
+    "GaussianNB": GaussianNB(),
+    "Decision Tree": DecisionTreeClassifier(),
     "Random Forest": RandomForestClassifier(),
     "AdaBoost": AdaBoostClassifier(),
     "Gradient Boosting": GradientBoostingClassifier(),
-    "XGBoost": XGBClassifier(eval_metric='logloss'),
-    "LightGBM": LGBMClassifier(),
-    # "CatBoost": CatBoostClassifier(verbose=False),
+    "XGBoost": XGBClassifier(),
+    "LightGBM": LGBMClassifier()
 }
 
-# modelos = {
-#     "Logistic Regression": LogisticRegression(max_iter=1000)
-# }
+modelos = {
+    "Logistic Regression": LogisticRegression(max_iter=2000),
+    "Random Forest": RandomForestClassifier(),
+    "XGBoost": XGBClassifier(),
+    "LightGBM": LGBMClassifier()
+}
 
-resultados_train = []
-resultados_test = []
+resultados_cv = {}
 
-for nome, modelo in modelos.items():
-    modelo.fit(X_train, y_train)
+cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=17)
 
-    print("-----------------------------")
+for nome, modelo in tqdm(modelos.items()):
 
-    # Probabilidade da classe positiva
-    y_train_proba = modelo.predict_proba(X_train)[:, 1]
-    y_test_proba = modelo.predict_proba(X_test)[:, 1]
+    resultados = cross_validate(
+                                modelo,
+                                X_train, y_train,
+                                cv=5,
+                                return_train_score=True,
+                                scoring=['balanced_accuracy', 'roc_auc']
+                            )
 
-    auc_train = roc_auc_score(y_train, y_train_proba)
-    auc_test = roc_auc_score(y_test, y_test_proba)
+    # Média dos resultados por modelo
+    resultados_cv[nome] = {
+        "train_bal_acc_mean": resultados["train_balanced_accuracy"].mean(),
+        "train_bal_acc_std":  resultados["train_balanced_accuracy"].std(),
+        "train_roc_auc_mean": resultados["train_roc_auc"].mean(),
+        "train_roc_auc_std":  resultados["train_roc_auc"].std(),
 
-    resultados_train.append((nome, auc_train))
-    resultados_test.append((nome, auc_test))
+        "test_bal_acc_mean":  resultados["test_balanced_accuracy"].mean(),
+        "test_bal_acc_std":   resultados["test_balanced_accuracy"].std(),
+        "test_roc_auc_mean":  resultados["test_roc_auc"].mean(),
+        "test_roc_auc_std":   resultados["test_roc_auc"].std()
+    }
 
-    print(f"{nome}: AUC train = {auc_train:.4f}")
-    print(f"{nome}: AUC teste = {auc_test:.4f}")
-
-    y_train_pred = modelo.predict(X_train)
-    y_test_pred = modelo.predict(X_test)
-
-    cm_train = confusion_matrix(y_train, y_train_pred, normalize='true')
-    cm_test = confusion_matrix(y_test, y_test_pred, normalize='true')
-
-    print(f"\nMatriz de confusão train - {nome}")
-    print(cm_train)
-    print(f"\nMatriz de confusão test - {nome}")
-    print(cm_test)
+df_resultados = pd.DataFrame(resultados_cv).T.sort_values(by='test_bal_acc_mean', ascending=False)
+    
+with open(file='othermodels_results.md', mode='w') as file:
+    file.write(df_resultados.to_markdown())
 # %%
