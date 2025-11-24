@@ -52,7 +52,21 @@ def criar_timestamp(df):
 
 def criar_colunas_tempo(df):
     df = df.copy()
+
+    # Mês
     df['mes'] = df['timestamp'].dt.month
+
+    # Hora do dia em formato cíclico
+    df['hora'] = df['timestamp'].dt.hour
+    df['minuto'] = df['timestamp'].dt.minute
+    df['segundo'] = df['timestamp'].dt.second
+
+    df['fracao_dia'] = (df['hora'] + df['minuto']/60 + df['segundo']/3600) /24
+
+    df['hora_sin'] = np.sin(2 * np.pi * df['fracao_dia'])
+    df['hora_cos'] = np.cos(2 * np.pi * df['fracao_dia'])
+
+    df.drop(columns=['hora', 'minuto', 'segundo', 'fracao_dia'], inplace=True)
 
     return df
 
@@ -200,7 +214,6 @@ def balancear_dataset(df, y_col):
     false_df = df[df[y_col] == 0].sample(n=len(true_df), random_state=17)
     return pd.concat([true_df, false_df], axis=0)
 
-
 # ===============================================================
 #                    PLOT ROC AUC
 # ===============================================================
@@ -234,7 +247,7 @@ datatran = preprocess(datatran[datatran["timestamp"] < cut_date])
 
 # Balanceamento
 y_col = "risco_grave"
-datatran = balancear_dataset(datatran, y_col)
+# datatran = balancear_dataset(datatran, y_col)
 
 # Criação de X e y
 X = datatran.drop(columns=y_col)
@@ -259,6 +272,12 @@ X_test = pd.DataFrame(
     columns=preprocessor.get_feature_names_out()
 )
 
+# SMOTE
+from imblearn.over_sampling import SMOTE
+
+smote = SMOTE(random_state=17)
+X_train, y_train = smote.fit_resample(X_train, y_train)
+
 # Treinar modelo
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
@@ -280,20 +299,20 @@ modelos = {
     # "SVC": SVC(kernel='rbf'),
     "KNN": KNeighborsClassifier(),
     "GaussianNB": GaussianNB(),
-    "Decision Tree": DecisionTreeClassifier(),
-    "Random Forest": RandomForestClassifier(),
+    # "Decision Tree": DecisionTreeClassifier(),
+    "Random Forest": RandomForestClassifier(class_weight='balanced'),
     "AdaBoost": AdaBoostClassifier(),
     "Gradient Boosting": GradientBoostingClassifier(),
     "XGBoost": XGBClassifier(),
     "LightGBM": LGBMClassifier()
 }
 
-modelos = {
-    "Logistic Regression": LogisticRegression(max_iter=2000),
-    "Random Forest": RandomForestClassifier(),
-    "XGBoost": XGBClassifier(),
-    "LightGBM": LGBMClassifier()
-}
+# modelos = {
+#     "Logistic Regression": LogisticRegression(max_iter=2000),
+#     "Random Forest": RandomForestClassifier(),
+#     "XGBoost": XGBClassifier(),
+#     "LightGBM": LGBMClassifier()
+# }
 
 resultados_cv = {}
 
@@ -312,18 +331,22 @@ for nome, modelo in tqdm(modelos.items()):
     # Média dos resultados por modelo
     resultados_cv[nome] = {
         "train_bal_acc_mean": resultados["train_balanced_accuracy"].mean(),
-        "train_bal_acc_std":  resultados["train_balanced_accuracy"].std(),
-        "train_roc_auc_mean": resultados["train_roc_auc"].mean(),
-        "train_roc_auc_std":  resultados["train_roc_auc"].std(),
-
+        # "train_bal_acc_std":  resultados["train_balanced_accuracy"].std(),
         "test_bal_acc_mean":  resultados["test_balanced_accuracy"].mean(),
-        "test_bal_acc_std":   resultados["test_balanced_accuracy"].std(),
+        # "test_bal_acc_std":   resultados["test_balanced_accuracy"].std(),
+
+        "train_roc_auc_mean": resultados["train_roc_auc"].mean(),
+        # "train_roc_auc_std":  resultados["train_roc_auc"].std(),
         "test_roc_auc_mean":  resultados["test_roc_auc"].mean(),
-        "test_roc_auc_std":   resultados["test_roc_auc"].std()
+        # "test_roc_auc_std":   resultados["test_roc_auc"].std()
     }
 
 df_resultados = pd.DataFrame(resultados_cv).T.sort_values(by='test_bal_acc_mean', ascending=False)
-    
+
+with open(file='othermodels_results.md', mode='r') as file_to_read_previous_results:
+    with open(file='othermodels_results_prev.md', mode='w') as file_to_write_previous_results:
+        file_to_write_previous_results.write(file_to_read_previous_results.read())
+
 with open(file='othermodels_results.md', mode='w') as file:
     file.write(df_resultados.to_markdown())
 # %%
