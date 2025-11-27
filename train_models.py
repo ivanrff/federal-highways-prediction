@@ -233,10 +233,12 @@ def plot_roc_auc(y_true, y_score, label=None):
 
     return value
 
-
 # ===============================================================
 #                       EXECUÇÃO PRINCIPAL
 # ===============================================================
+imbalanced_classes_method = 'undersampling' # 'smote', None, 'undersampling'
+
+
 datatran = load_datatran()
 datatran = criar_timestamp(datatran)
 
@@ -247,7 +249,9 @@ datatran = preprocess(datatran[datatran["timestamp"] < cut_date])
 
 # Balanceamento
 y_col = "risco_grave"
-# datatran = balancear_dataset(datatran, y_col)
+
+if imbalanced_classes_method == 'undersampling':
+    datatran = balancear_dataset(datatran, y_col)
 
 # Criação de X e y
 X = datatran.drop(columns=y_col)
@@ -275,8 +279,13 @@ X_test = pd.DataFrame(
 # SMOTE
 from imblearn.over_sampling import SMOTE
 
-smote = SMOTE(random_state=17)
-X_train, y_train = smote.fit_resample(X_train, y_train)
+if imbalanced_classes_method == 'smote':
+    smote = SMOTE(random_state=17)
+    X_train, y_train = smote.fit_resample(X_train, y_train)
+
+# class weights
+from sklearn.utils.class_weight import compute_sample_weight
+sample_weights = compute_sample_weight(class_weight="balanced", y=y_train)
 
 # Treinar modelo
 from sklearn.linear_model import LogisticRegression
@@ -293,18 +302,19 @@ from xgboost import XGBClassifier
 from lightgbm import LGBMClassifier
 from sklearn.model_selection import cross_validate, KFold
 from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import balanced_accuracy_score
 
 modelos = {
-    "Logistic Regression": LogisticRegression(max_iter=2000),
-    # "SVC": SVC(kernel='rbf'),
+    "Logistic Regression": LogisticRegression(max_iter=2000, class_weight='balanced'),
+    "SVC": SVC(kernel='rbf', class_weight='balanced'),
     "KNN": KNeighborsClassifier(),
     "GaussianNB": GaussianNB(),
-    # "Decision Tree": DecisionTreeClassifier(),
+    "Decision Tree": DecisionTreeClassifier(class_weight='balanced'),
     "Random Forest": RandomForestClassifier(class_weight='balanced'),
     "AdaBoost": AdaBoostClassifier(),
     "Gradient Boosting": GradientBoostingClassifier(),
-    "XGBoost": XGBClassifier(),
-    "LightGBM": LGBMClassifier()
+    "XGBoost": XGBClassifier(scale_pos_weight=()),
+    "LightGBM": LGBMClassifier(class_weight='balanced')
 }
 
 # modelos = {
@@ -314,39 +324,52 @@ modelos = {
 #     "LightGBM": LGBMClassifier()
 # }
 
-resultados_cv = {}
+resultados = {}
 
 cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=17)
 
 for nome, modelo in tqdm(modelos.items()):
 
-    resultados = cross_validate(
+    resultados_cv = cross_validate(
                                 modelo,
                                 X_train, y_train,
                                 cv=5,
                                 return_train_score=True,
                                 scoring=['balanced_accuracy', 'roc_auc']
                             )
+    try:
+        modelo.fit(X_train, y_train, sample_weight=sample_weights)
+    except:
+        modelo.fit(X_train, y_train)
+
+    y_pred_train = modelo.predict(X_train)
+    y_pred_test = modelo.predict(X_test)
+
+    bal_acc_train = balanced_accuracy_score(y_true=y_train, y_pred=y_pred_train)
+    bal_acc_test = balanced_accuracy_score(y_true=y_test, y_pred=y_pred_test)
 
     # Média dos resultados por modelo
-    resultados_cv[nome] = {
-        "train_bal_acc_mean": resultados["train_balanced_accuracy"].mean(),
-        # "train_bal_acc_std":  resultados["train_balanced_accuracy"].std(),
-        "test_bal_acc_mean":  resultados["test_balanced_accuracy"].mean(),
-        # "test_bal_acc_std":   resultados["test_balanced_accuracy"].std(),
+    resultados[nome] = {
+        "cv_train_bal_acc_mean": resultados_cv["train_balanced_accuracy"].mean(),
+        # "cv_train_bal_acc_std":  resultados_cv["train_balanced_accuracy"].std(),
+        "cv_test_bal_acc_mean":  resultados_cv["test_balanced_accuracy"].mean(),
+        # "cv_test_bal_acc_std":   resultados_cv["test_balanced_accuracy"].std(),
 
-        "train_roc_auc_mean": resultados["train_roc_auc"].mean(),
-        # "train_roc_auc_std":  resultados["train_roc_auc"].std(),
-        "test_roc_auc_mean":  resultados["test_roc_auc"].mean(),
-        # "test_roc_auc_std":   resultados["test_roc_auc"].std()
+        "train_bal_acc": bal_acc_train,
+        "test_bal_acc": bal_acc_test,
+
+        "cv_train_roc_auc_mean": resultados_cv["train_roc_auc"].mean(),
+        # "cv_train_roc_auc_std":  resultados_cv["train_roc_auc"].std(),
+        "cv_test_roc_auc_mean":  resultados_cv["test_roc_auc"].mean(),
+        # "cv_test_roc_auc_std":   resultados_cv["test_roc_auc"].std()
     }
 
-df_resultados = pd.DataFrame(resultados_cv).T.sort_values(by='test_bal_acc_mean', ascending=False)
+df_resultados = pd.DataFrame(resultados).T.sort_values(by='test_bal_acc', ascending=False)
 
-with open(file='othermodels_results.md', mode='r') as file_to_read_previous_results:
-    with open(file='othermodels_results_prev.md', mode='w') as file_to_write_previous_results:
-        file_to_write_previous_results.write(file_to_read_previous_results.read())
+os.makedirs('results', exist_ok=True)
 
-with open(file='othermodels_results.md', mode='w') as file:
+with open(file=f'results/models_results_{imbalanced_classes_method}.md', mode='w') as file:
     file.write(df_resultados.to_markdown())
 # %%
+
+# coletar os resultados com smote, com undersampling e sem nada e salvar no readme
