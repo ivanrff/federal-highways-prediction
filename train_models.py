@@ -18,6 +18,7 @@ import seaborn as sns
 from feature_engine.encoding import RareLabelEncoder
 from tqdm import tqdm
 import warnings
+from sklearn.utils import resample
 
 warnings.filterwarnings(
     "ignore", 
@@ -209,10 +210,17 @@ def criar_preprocessor(train_df):
 # ===============================================================
 #                  BALANCEAMENTO DO TARGET
 # ===============================================================
-def balancear_dataset(df, y_col):
+def undersample_dataset(df, y_col):
     true_df = df[df[y_col] == 1]
     false_df = df[df[y_col] == 0].sample(n=len(true_df), random_state=17)
     return pd.concat([true_df, false_df], axis=0)
+
+def oversample_dataset(df, y_col):
+    true_df = df[df[y_col] == 1]
+    false_df = df[df[y_col] == 0]
+
+    true_df_oversampled = resample(true_df, replace=True, n_samples=len(false_df), random_state=17)
+    return pd.concat([true_df_oversampled, false_df], axis=0)
 
 # ===============================================================
 #                    PLOT ROC AUC
@@ -236,7 +244,7 @@ def plot_roc_auc(y_true, y_score, label=None):
 # ===============================================================
 #                       EXECUÇÃO PRINCIPAL
 # ===============================================================
-imbalanced_classes_method = 'undersampling' # 'smote', None, 'undersampling'
+imbalanced_classes_method = 'oversampling' # 'smote', None, 'undersampling', 'oversampling'
 
 
 datatran = load_datatran()
@@ -251,7 +259,9 @@ datatran = preprocess(datatran[datatran["timestamp"] < cut_date])
 y_col = "risco_grave"
 
 if imbalanced_classes_method == 'undersampling':
-    datatran = balancear_dataset(datatran, y_col)
+    datatran = undersample_dataset(datatran, y_col)
+elif imbalanced_classes_method == 'oversampling':
+    datatran = oversample_dataset(datatran, y_col)
 
 # Criação de X e y
 X = datatran.drop(columns=y_col)
@@ -302,20 +312,36 @@ from xgboost import XGBClassifier
 from lightgbm import LGBMClassifier
 from sklearn.model_selection import cross_validate, KFold
 from sklearn.model_selection import StratifiedKFold
-from sklearn.metrics import balanced_accuracy_score
+from sklearn.metrics import balanced_accuracy_score, recall_score
+from imblearn.metrics import specificity_score
 
 modelos = {
-    "Logistic Regression": LogisticRegression(max_iter=2000, class_weight='balanced'),
-    "SVC": SVC(kernel='rbf', class_weight='balanced'),
+    "Logistic Regression": LogisticRegression(max_iter=2000),
+    # "SVC": SVC(kernel='rbf'),
     "KNN": KNeighborsClassifier(),
     "GaussianNB": GaussianNB(),
-    "Decision Tree": DecisionTreeClassifier(class_weight='balanced'),
-    "Random Forest": RandomForestClassifier(class_weight='balanced'),
+    "Random Forest": RandomForestClassifier(),
     "AdaBoost": AdaBoostClassifier(),
     "Gradient Boosting": GradientBoostingClassifier(),
-    "XGBoost": XGBClassifier(scale_pos_weight=()),
-    "LightGBM": LGBMClassifier(class_weight='balanced')
+    "XGBoost": XGBClassifier(),
+    "LightGBM": LGBMClassifier()
 }
+
+if not imbalanced_classes_method:
+    n_neg = (datatran[datatran['risco_grave'] == 0]).shape[0]
+    print(n_neg)
+    n_pos = (datatran[datatran['risco_grave'] == 1]).shape[0]
+    print(n_pos)
+
+    scale = n_neg / n_pos
+
+    modelos = {
+        "Logistic Regression": LogisticRegression(max_iter=2000, class_weight='balanced'),
+        # "SVC": SVC(kernel='rbf', class_weight='balanced'),
+        "Random Forest": RandomForestClassifier(class_weight='balanced'),
+        "XGBoost": XGBClassifier(scale_pos_weight=(scale)),
+        "LightGBM": LGBMClassifier(class_weight='balanced')
+    }
 
 # modelos = {
 #     "Logistic Regression": LogisticRegression(max_iter=2000),
@@ -337,9 +363,13 @@ for nome, modelo in tqdm(modelos.items()):
                                 return_train_score=True,
                                 scoring=['balanced_accuracy', 'roc_auc']
                             )
-    try:
-        modelo.fit(X_train, y_train, sample_weight=sample_weights)
-    except:
+    if not imbalanced_classes_method:
+        try:
+            modelo.fit(X_train, y_train, sample_weight=sample_weights)
+        except:
+            print(f"{nome} falhou o sample_weight")
+            modelo.fit(X_train, y_train)
+    else:
         modelo.fit(X_train, y_train)
 
     y_pred_train = modelo.predict(X_train)
@@ -347,6 +377,9 @@ for nome, modelo in tqdm(modelos.items()):
 
     bal_acc_train = balanced_accuracy_score(y_true=y_train, y_pred=y_pred_train)
     bal_acc_test = balanced_accuracy_score(y_true=y_test, y_pred=y_pred_test)
+
+    recall_test = recall_score(y_true=y_test, y_pred=y_pred_test)
+    specificity_test = specificity_score(y_true=y_test, y_pred=y_pred_test)
 
     # Média dos resultados por modelo
     resultados[nome] = {
@@ -357,6 +390,8 @@ for nome, modelo in tqdm(modelos.items()):
 
         "train_bal_acc": bal_acc_train,
         "test_bal_acc": bal_acc_test,
+        "test_recall": recall_test,
+        "test_specificity": specificity_test,
 
         "cv_train_roc_auc_mean": resultados_cv["train_roc_auc"].mean(),
         # "cv_train_roc_auc_std":  resultados_cv["train_roc_auc"].std(),
