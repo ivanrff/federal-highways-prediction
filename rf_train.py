@@ -16,6 +16,15 @@ from sklearn.metrics import confusion_matrix, roc_curve, auc
 import matplotlib.pyplot as plt
 import seaborn as sns
 from feature_engine.encoding import RareLabelEncoder
+from tqdm import tqdm
+import warnings
+from sklearn.utils import resample
+
+warnings.filterwarnings(
+    "ignore", 
+    message="This Pipeline instance is not fitted yet.", 
+    category=FutureWarning
+)
 
 
 # ===============================================================
@@ -23,6 +32,7 @@ from feature_engine.encoding import RareLabelEncoder
 # ===============================================================
 def load_datatran():
     df = pd.concat([
+        pd.read_csv("data/datatran2023.csv", sep=';', encoding='latin1'),
         pd.read_csv("data/datatran2024.csv", sep=';', encoding='latin1'),
         pd.read_csv("data/datatran2025.csv", sep=';', encoding='latin1')
     ], axis=0)
@@ -41,6 +51,25 @@ def criar_timestamp(df):
     df.drop(columns=['data_inversa', 'horario'], inplace=True)
     return df
 
+def criar_colunas_tempo(df):
+    df = df.copy()
+
+    # Mês
+    df['mes'] = df['timestamp'].dt.month
+
+    # Hora do dia em formato cíclico
+    df['hora'] = df['timestamp'].dt.hour
+    df['minuto'] = df['timestamp'].dt.minute
+    df['segundo'] = df['timestamp'].dt.second
+
+    df['fracao_dia'] = (df['hora'] + df['minuto']/60 + df['segundo']/3600) /24
+
+    df['hora_sin'] = np.sin(2 * np.pi * df['fracao_dia'])
+    df['hora_cos'] = np.cos(2 * np.pi * df['fracao_dia'])
+
+    df.drop(columns=['hora', 'minuto', 'segundo', 'fracao_dia'], inplace=True)
+
+    return df
 
 def limpar_nulos(df):
     df = df.copy()
@@ -54,7 +83,7 @@ def remover_colunas_irrelevantes(df):
         "ignorados", "feridos", "classificacao_acidente",
         "municipio", "delegacia", "regional",
         "tipo_acidente", "causa_acidente",
-        "id", "timestamp", "pessoas", "veiculos"
+        "id", "timestamp", "veiculos"
     ])
 
 
@@ -84,7 +113,7 @@ def processar_dia_semana(df):
 
 def processar_uso_solo(df):
     df = df.copy()
-    df['uso_solo'] = df['uso_solo'].replace({'Sim': 1, 'Não': 0}).astype(int)
+    df['uso_solo'] = df['uso_solo'].replace({'Sim': '1', 'Não': '0'}).astype(int)
     return df
 
 
@@ -107,6 +136,7 @@ def converter_booleans(df):
 def preprocess(df):
     df = criar_target(df)
     df = limpar_nulos(df)
+    df = criar_colunas_tempo(df)
     df = remover_colunas_irrelevantes(df)
     df = processar_km_lat_lon(df)
     df = processar_dia_semana(df)
@@ -137,10 +167,19 @@ class MultiLabelBinarizerWrapper(BaseEstimator, TransformerMixin):
         return self.mlb.classes_
 
 
+from sklearn.preprocessing import StandardScaler
+
 def criar_preprocessor(train_df):
 
     cat_cols = train_df.select_dtypes(include="object").columns.tolist()
     cat_cols.remove("tracado_via")
+
+    bool_cols = [c for c in train_df.select_dtypes("bool").columns if c != "risco_grave"]
+
+    num_cols = train_df.select_dtypes(include=["int64", "float64"]).columns.tolist()
+    # num_cols.remove("risco_grave")      # target não entra
+    # E remover colunas que serão tratadas nos pipelines categóricos:
+    num_cols = [c for c in num_cols if "tracado_via" not in c]
 
     cat_pipeline = Pipeline(steps=[
         ("rare", RareLabelEncoder(tol=0.03, n_categories=1)),
@@ -151,25 +190,37 @@ def criar_preprocessor(train_df):
         ("multilabel", MultiLabelBinarizerWrapper(separator=";"))
     ])
 
+    num_pipeline = Pipeline(steps=[
+        ("scaler", StandardScaler())
+    ])
+
     pre = ColumnTransformer(
         transformers=[
             ("cat", cat_pipeline, cat_cols),
-            ("tracado", tracado_pipeline, ["tracado_via"])
-        ],
-        remainder="passthrough"
+            ("tracado", tracado_pipeline, ["tracado_via"]),
+            ("num", num_pipeline, num_cols),
+            ("bool", "passthrough", bool_cols)
+        ]
     )
 
     return pre
 
 
+
 # ===============================================================
 #                  BALANCEAMENTO DO TARGET
 # ===============================================================
-def balancear_dataset(df, y_col):
+def undersample_dataset(df, y_col):
     true_df = df[df[y_col] == 1]
     false_df = df[df[y_col] == 0].sample(n=len(true_df), random_state=17)
     return pd.concat([true_df, false_df], axis=0)
 
+def oversample_dataset(df, y_col):
+    true_df = df[df[y_col] == 1]
+    false_df = df[df[y_col] == 0]
+
+    true_df_oversampled = resample(true_df, replace=True, n_samples=len(false_df), random_state=17)
+    return pd.concat([true_df_oversampled, false_df], axis=0)
 
 # ===============================================================
 #                    PLOT ROC AUC
@@ -190,10 +241,12 @@ def plot_roc_auc(y_true, y_score, label=None):
 
     return value
 
-
 # ===============================================================
 #                       EXECUÇÃO PRINCIPAL
 # ===============================================================
+imbalanced_classes_method = 'oversampling' # 'smote', None, 'undersampling', 'oversampling'
+
+
 datatran = load_datatran()
 datatran = criar_timestamp(datatran)
 
@@ -202,38 +255,50 @@ cut_date = pd.to_datetime("2025-09-01")
 oot_df = preprocess(datatran[datatran["timestamp"] >= cut_date])
 datatran = preprocess(datatran[datatran["timestamp"] < cut_date])
 
-datatran
-# %%
+# Balanceamento
+y_col = "risco_grave"
+
+if imbalanced_classes_method == 'undersampling':
+    datatran = undersample_dataset(datatran, y_col)
+elif imbalanced_classes_method == 'oversampling':
+    datatran = oversample_dataset(datatran, y_col)
+
+# Criação de X e y
+X = datatran.drop(columns=y_col)
+y = datatran[y_col]
 
 # Train/Test Split
-train_df, test_df = train_test_split(
-    datatran, test_size=0.1, random_state=17,
-    stratify=datatran["risco_grave"]
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.1, random_state=17,
+    stratify=y
 )
 
 # Pipeline de encoding
-preprocessor = criar_preprocessor(train_df)
+preprocessor = criar_preprocessor(X_train)
 
-train_df = pd.DataFrame(
-    preprocessor.fit_transform(train_df),
+X_train = pd.DataFrame(
+    preprocessor.fit_transform(X_train),
     columns=preprocessor.get_feature_names_out()
 )
 
-test_df = pd.DataFrame(
-    preprocessor.transform(test_df),
+X_test = pd.DataFrame(
+    preprocessor.transform(X_test),
     columns=preprocessor.get_feature_names_out()
 )
 
-# Converter colunas numéricas
-train_df = train_df.apply(pd.to_numeric)
-test_df = test_df.apply(pd.to_numeric)
+# SMOTE
+from imblearn.over_sampling import SMOTE
 
-# Balanceamento
-y_col = "remainder__risco_grave"
-train_df = balancear_dataset(train_df, y_col)
+if imbalanced_classes_method == 'smote':
+    smote = SMOTE(random_state=17)
+    X_train, y_train = smote.fit_resample(X_train, y_train)
 
-X_train = train_df.drop(columns=y_col)
-y_train = train_df[y_col]
+# class weights
+from sklearn.utils.class_weight import compute_sample_weight
+sample_weights = compute_sample_weight(class_weight="balanced", y=y_train)
+
+
+# ---------------------------------------------------
 
 # Treinar modelo
 param_grid = {
@@ -242,12 +307,15 @@ param_grid = {
     "max_depth": [14, 15, 16, None]
 }
 
+from sklearn.model_selection import StratifiedKFold
+cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=17)
+
 rf = GridSearchCV(
     estimator=RandomForestClassifier(random_state=42),
     param_grid=param_grid,
     n_jobs=-1,
-    scoring="roc_auc",
-    cv=5,
+    scoring="balanced_accuracy",
+    cv=cv,
     refit=True
 )
 
@@ -259,10 +327,6 @@ print(f"Treino em {now() - t0:.1f}s")
 # Avaliação ROC
 y_score_train = rf.best_estimator_.predict_proba(X_train)[:, 1]
 auc_train = plot_roc_auc(y_train, y_score_train, label="Train")
-
-X_test = test_df.drop(columns=y_col)
-X_test = X_test.reindex(columns=X_train.columns, fill_value=0)
-y_test = test_df[y_col]
 
 y_score_test = rf.best_estimator_.predict_proba(X_test)[:, 1]
 auc_test = plot_roc_auc(y_test, y_score_test, label="Test")
@@ -293,3 +357,6 @@ feature_importances.columns = ['coluna', 'importancia']
 
 feature_importances = feature_importances.sort_values(by='importancia', ascending=False)
 # %%
+
+X = datatran.drop(columns=y_col)
+y = datatran[y_col]
