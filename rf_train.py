@@ -260,8 +260,6 @@ y_col = "risco_grave"
 
 if imbalanced_classes_method == 'undersampling':
     datatran = undersample_dataset(datatran, y_col)
-elif imbalanced_classes_method == 'oversampling':
-    datatran = oversample_dataset(datatran, y_col)
 
 # Criação de X e y
 X = datatran.drop(columns=y_col)
@@ -272,6 +270,13 @@ X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.1, random_state=17,
     stratify=y
 )
+
+if imbalanced_classes_method == 'oversampling':
+    datatran_train = pd.concat([X_train, y_train], axis=1)
+    datatran_train = oversample_dataset(datatran_train, y_col)
+
+    X_train = datatran_train.drop(columns=y_col)
+    y_train = datatran_train[y_col]
 
 # Pipeline de encoding
 preprocessor = criar_preprocessor(X_train)
@@ -304,7 +309,7 @@ sample_weights = compute_sample_weight(class_weight="balanced", y=y_train)
 param_grid = {
     "n_estimators": [100, 200],
     "min_samples_leaf": [8, 10, 12],
-    "max_depth": [14, 15, 16, None]
+    "max_depth": [14, 15, 16]
 }
 
 from sklearn.model_selection import StratifiedKFold
@@ -337,16 +342,16 @@ print(f"AUC test  = {auc_test:.4f}")
 
 # cm matrix
 
-y_pred = rf.predict(X_train)
+y_test_pred = rf.predict(X_test)
 
-sns.heatmap(confusion_matrix(y_pred=y_pred, y_true=y_train), annot=True, cmap='Blues', fmt='.0f')
-plt.title('Confusion Matrix Heatmap')
+sns.heatmap(confusion_matrix(y_pred=y_test_pred, y_true=y_test), annot=True, cmap='Blues', fmt='.0f')
+plt.title('Confusion Matrix Heatmap [TEST]')
 plt.xlabel('Predicted Label')
 plt.ylabel('True Label')
 plt.show()
 
-sns.heatmap(confusion_matrix(y_pred=y_pred, y_true=y_train, normalize='true'), annot=True, cmap='Blues', fmt='.0%')
-plt.title('Confusion Matrix Heatmap')
+sns.heatmap(confusion_matrix(y_pred=y_test_pred, y_true=y_test, normalize='true'), annot=True, cmap='Blues', fmt='.0%')
+plt.title('Confusion Matrix Heatmap [TEST]')
 plt.xlabel('Predicted Label')
 plt.ylabel('True Label')
 plt.show()
@@ -358,5 +363,24 @@ feature_importances.columns = ['coluna', 'importancia']
 feature_importances = feature_importances.sort_values(by='importancia', ascending=False)
 # %%
 
-X = datatran.drop(columns=y_col)
-y = datatran[y_col]
+X_oot = oot_df.drop(columns=y_col)
+y_oot = oot_df[y_col]
+
+X_oot = pd.DataFrame(
+    preprocessor.transform(X_oot),
+    columns=preprocessor.get_feature_names_out()
+)
+
+y_score_oot = rf.best_estimator_.predict_proba(X_oot)[:, 1]
+auc_oot = plot_roc_auc(y_oot, y_score_oot, label="oot")
+
+print(f"AUC oot  = {auc_oot:.4f}")
+
+y_oot_pred = rf.predict(X_oot)
+
+sns.heatmap(confusion_matrix(y_pred=y_oot_pred, y_true=y_oot), annot=True, cmap='Blues', fmt='.0f')
+plt.title('Confusion Matrix Heatmap [OOT]')
+plt.xlabel('Predicted Label')
+plt.ylabel('True Label')
+plt.show()
+# %%

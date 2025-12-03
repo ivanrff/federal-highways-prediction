@@ -260,8 +260,6 @@ y_col = "risco_grave"
 
 if imbalanced_classes_method == 'undersampling':
     datatran = undersample_dataset(datatran, y_col)
-elif imbalanced_classes_method == 'oversampling':
-    datatran = oversample_dataset(datatran, y_col)
 
 # Criação de X e y
 X = datatran.drop(columns=y_col)
@@ -272,6 +270,13 @@ X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.1, random_state=17,
     stratify=y
 )
+
+if imbalanced_classes_method == 'oversampling':
+    datatran_train = pd.concat([X_train, y_train], axis=1)
+    datatran_train = oversample_dataset(datatran_train, y_col)
+
+    X_train = datatran_train.drop(columns=y_col)
+    y_train = datatran_train[y_col]
 
 # Pipeline de encoding
 preprocessor = criar_preprocessor(X_train)
