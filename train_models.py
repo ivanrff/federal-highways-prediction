@@ -244,7 +244,7 @@ def plot_roc_auc(y_true, y_score, label=None):
 # ===============================================================
 #                       EXECUÇÃO PRINCIPAL
 # ===============================================================
-imbalanced_classes_method = 'oversampling' # 'smote', None, 'undersampling', 'oversampling'
+imbalanced_classes_method = 'undersampling' # 'smote', None, 'undersampling', 'oversampling'
 
 
 datatran = load_datatran()
@@ -258,9 +258,6 @@ datatran = preprocess(datatran[datatran["timestamp"] < cut_date])
 # Balanceamento
 y_col = "risco_grave"
 
-if imbalanced_classes_method == 'undersampling':
-    datatran = undersample_dataset(datatran, y_col)
-
 # Criação de X e y
 X = datatran.drop(columns=y_col)
 y = datatran[y_col]
@@ -271,7 +268,14 @@ X_train, X_test, y_train, y_test = train_test_split(
     stratify=y
 )
 
-if imbalanced_classes_method == 'oversampling':
+if imbalanced_classes_method == 'undersampling':
+    datatran_train = pd.concat([X_train, y_train], axis=1)
+    datatran_train = undersample_dataset(datatran_train, y_col)
+
+    X_train = datatran_train.drop(columns=y_col)
+    y_train = datatran_train[y_col]
+    
+elif imbalanced_classes_method == 'oversampling':
     datatran_train = pd.concat([X_train, y_train], axis=1)
     datatran_train = oversample_dataset(datatran_train, y_col)
 

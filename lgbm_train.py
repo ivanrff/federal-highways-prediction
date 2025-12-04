@@ -5,7 +5,7 @@
 import os
 import numpy as np
 import pandas as pd
-from time import time as now
+from time import time
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.preprocessing import OneHotEncoder, MultiLabelBinarizer
@@ -19,6 +19,8 @@ from feature_engine.encoding import RareLabelEncoder
 from tqdm import tqdm
 import warnings
 from sklearn.utils import resample
+from sklearn.decomposition import PCA
+from lightgbm import LGBMClassifier
 
 warnings.filterwarnings(
     "ignore", 
@@ -182,7 +184,7 @@ def criar_preprocessor(train_df):
     num_cols = [c for c in num_cols if "tracado_via" not in c]
 
     cat_pipeline = Pipeline(steps=[
-        ("rare", RareLabelEncoder(tol=0.03, n_categories=1)),
+        ("rare", RareLabelEncoder(tol=0.20, n_categories=1)),
         ("ohe", OneHotEncoder(sparse_output=False, handle_unknown="ignore"))
     ])
 
@@ -275,116 +277,131 @@ if imbalanced_classes_method == 'undersampling':
 
     X_train = datatran_train.drop(columns=y_col)
     y_train = datatran_train[y_col]
-if imbalanced_classes_method == 'oversampling':
-    datatran_train = pd.concat([X_train, y_train], axis=1)
-    datatran_train = oversample_dataset(datatran_train, y_col)
+# if imbalanced_classes_method == 'oversampling':
+#     datatran_train = pd.concat([X_train, y_train], axis=1)
+#     datatran_train = oversample_dataset(datatran_train, y_col)
 
-    X_train = datatran_train.drop(columns=y_col)
-    y_train = datatran_train[y_col]
+#     X_train = datatran_train.drop(columns=y_col)
+#     y_train = datatran_train[y_col]
 
 # Pipeline de encoding
 preprocessor = criar_preprocessor(X_train)
 
-X_train = pd.DataFrame(
-    preprocessor.fit_transform(X_train),
-    columns=preprocessor.get_feature_names_out()
-)
+# X_train = pd.DataFrame(
+#     preprocessor.fit_transform(X_train),
+#     columns=preprocessor.get_feature_names_out()
+# )
 
-X_test = pd.DataFrame(
-    preprocessor.transform(X_test),
-    columns=preprocessor.get_feature_names_out()
-)
+# X_test = pd.DataFrame(
+#     preprocessor.transform(X_test),
+#     columns=preprocessor.get_feature_names_out()
+# )
 
-# SMOTE
-from imblearn.over_sampling import SMOTE
+# # SMOTE
+# from imblearn.over_sampling import SMOTE
 
-if imbalanced_classes_method == 'smote':
-    smote = SMOTE(random_state=17)
-    X_train, y_train = smote.fit_resample(X_train, y_train)
+# if imbalanced_classes_method == 'smote':
+#     smote = SMOTE(random_state=17)
+#     X_train, y_train = smote.fit_resample(X_train, y_train)
 
-# class weights
-from sklearn.utils.class_weight import compute_sample_weight
-sample_weights = compute_sample_weight(class_weight="balanced", y=y_train)
+# # class weights
+# from sklearn.utils.class_weight import compute_sample_weight
+# sample_weights = compute_sample_weight(class_weight="balanced", y=y_train)
 
 
 # ---------------------------------------------------
 
 # Treinar modelo
-param_grid = {
-    "n_estimators": [100, 200],
-    "min_samples_leaf": [8, 10, 12],
-    "max_depth": [14, 15, 16]
+
+model_pca_pipeline = Pipeline([
+    ('preprocessor', preprocessor),
+    # ('pca', PCA(n_components=0.90, random_state=17)),
+    ('lgbm', LGBMClassifier(class_weight='balanced'))
+])
+
+param_grid_lgbm = {
+    # Estrutura da árvore
+    "lgbm__num_leaves": [15, 25],
+    "lgbm__max_depth": [15, 20], # -1 é ilimitado (controlado por num_leaves)
+    
+    # Aprendizado
+    "lgbm__learning_rate": [0.01, 0.05],
+    "lgbm__n_estimators": [300, 400]
+}
+
+
+param_grid_lgbm_robust = {
+    "lgbm__num_leaves": [31, 60],
+    "lgbm__learning_rate": [0.05, 0.1],
+    "lgbm__n_estimators": [100, 200],
+    
+    # Regularização / Controle de Overfitting
+    "lgbm__min_child_samples": [20, 50], 
+    "lgbm__subsample": [0.8, 1.0], # Sorteia 80% das linhas por árvore
+    "lgbm__colsample_bytree": [0.8, 1.0] # Sorteia 80% das colunas por árvore
 }
 
 from sklearn.model_selection import StratifiedKFold
 cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=17)
 
-rf = GridSearchCV(
-    estimator=RandomForestClassifier(random_state=42),
-    param_grid=param_grid,
-    n_jobs=-1,
+lgbm_gs = GridSearchCV(
+    estimator=model_pca_pipeline,
+    param_grid=param_grid_lgbm,
+    n_jobs=-3,
     scoring="balanced_accuracy",
     cv=cv,
-    refit=True
+    refit=True,
+    verbose=3
 )
 
-t0 = now()
-rf.fit(X_train, y_train)
-print("Best params:", rf.best_params_)
-print(f"Treino em {now() - t0:.1f}s")
+from datetime import datetime
 
-# Avaliação ROC
-y_score_train = rf.best_estimator_.predict_proba(X_train)[:, 1]
-auc_train = plot_roc_auc(y_train, y_score_train, label="Train")
+t0 = time()
+print(f"Treino iniciado {datetime.now()}")
+lgbm_gs.fit(X_train, y_train)
+print("Best params:", lgbm_gs.best_params_)
+print(f"Treino em {time() - t0:.1f}s")
 
-y_score_test = rf.best_estimator_.predict_proba(X_test)[:, 1]
-auc_test = plot_roc_auc(y_test, y_score_test, label="Test")
+def evaluate(model, X_to_predict, y_true, data_slice_name):
 
-print(f"AUC train = {auc_train:.4f}")
-print(f"AUC test  = {auc_test:.4f}")
+    # Avaliação ROC
+    y_probas = lgbm_gs.best_estimator_.predict_proba(X_to_predict)[:, 1]
+    auc = plot_roc_auc(y_true, y_probas, label=data_slice_name)
 
+    print(f"AUC {data_slice_name} = {auc:.4f}")
 
-# cm matrix
+    y_pred = model.predict(X_to_predict)
 
-y_test_pred = rf.predict(X_test)
+    # cm matrix
+    sns.heatmap(confusion_matrix(y_pred=y_pred, y_true=y_true), annot=True, cmap='Blues', fmt='.0f')
+    plt.title(f'Confusion Matrix Heatmap [{data_slice_name}]')
+    plt.xlabel('Predicted Label')
+    plt.ylabel('True Label')
+    plt.show()
 
-sns.heatmap(confusion_matrix(y_pred=y_test_pred, y_true=y_test), annot=True, cmap='Blues', fmt='.0f')
-plt.title('Confusion Matrix Heatmap [TEST]')
-plt.xlabel('Predicted Label')
-plt.ylabel('True Label')
-plt.show()
+    sns.heatmap(confusion_matrix(y_pred=y_pred, y_true=y_true, normalize='true'), annot=True, cmap='Blues', fmt='.0%')
+    plt.title(f'Confusion Matrix Heatmap [{data_slice_name}]')
+    plt.xlabel('Predicted Label')
+    plt.ylabel('True Label')
+    plt.show()
 
-sns.heatmap(confusion_matrix(y_pred=y_test_pred, y_true=y_test, normalize='true'), annot=True, cmap='Blues', fmt='.0%')
-plt.title('Confusion Matrix Heatmap [TEST]')
-plt.xlabel('Predicted Label')
-plt.ylabel('True Label')
-plt.show()
+evaluate(lgbm_gs, X_train, y_train, 'TRAIN')
+evaluate(lgbm_gs, X_test, y_test, 'TEST')
 
-feature_importances = pd.DataFrame([X_train.columns, rf.best_estimator_.feature_importances_]).T
-
-feature_importances.columns = ['coluna', 'importancia']
-
-feature_importances = feature_importances.sort_values(by='importancia', ascending=False)
 # %%
+# feature_importances = pd.DataFrame([X_train_pre.columns, rf.best_estimator_.feature_importances_]).T
+
+# feature_importances.columns = ['coluna', 'importancia']
+
+# feature_importances = feature_importances.sort_values(by='importancia', ascending=False)
 
 X_oot = oot_df.drop(columns=y_col)
 y_oot = oot_df[y_col]
 
-X_oot = pd.DataFrame(
-    preprocessor.transform(X_oot),
-    columns=preprocessor.get_feature_names_out()
-)
+# X_oot = pd.DataFrame(
+#     preprocessor.transform(X_oot),
+#     columns=preprocessor.get_feature_names_out()
+# )
 
-y_score_oot = rf.best_estimator_.predict_proba(X_oot)[:, 1]
-auc_oot = plot_roc_auc(y_oot, y_score_oot, label="oot")
-
-print(f"AUC oot  = {auc_oot:.4f}")
-
-y_oot_pred = rf.predict(X_oot)
-
-sns.heatmap(confusion_matrix(y_pred=y_oot_pred, y_true=y_oot), annot=True, cmap='Blues', fmt='.0f')
-plt.title('Confusion Matrix Heatmap [OOT]')
-plt.xlabel('Predicted Label')
-plt.ylabel('True Label')
-plt.show()
+evaluate(lgbm_gs, X_oot, y_oot, 'OOT')
 # %%
