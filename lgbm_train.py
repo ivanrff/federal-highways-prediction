@@ -21,6 +21,7 @@ import warnings
 from sklearn.utils import resample
 from sklearn.decomposition import PCA
 from lightgbm import LGBMClassifier
+from sklearn.metrics import balanced_accuracy_score
 
 warnings.filterwarnings(
     "ignore", 
@@ -85,7 +86,7 @@ def remover_colunas_irrelevantes(df):
         "ignorados", "feridos", "classificacao_acidente",
         "municipio", "delegacia", "regional",
         "tipo_acidente", "causa_acidente",
-        "id", "timestamp", "veiculos"
+        "id", "timestamp", "veiculos", "pessoas"
     ])
 
 
@@ -134,6 +135,10 @@ def converter_booleans(df):
             df[col] = df[col].astype(bool)
     return df
 
+def rodovia_para_categ(df):
+    df = df.copy()
+    df['br'] = df['br'].astype(str)
+    return df
 
 def preprocess(df):
     df = criar_target(df)
@@ -144,6 +149,7 @@ def preprocess(df):
     df = processar_dia_semana(df)
     df = processar_uso_solo(df)
     df = converter_booleans(df)
+    df = rodovia_para_categ(df)
     return df
 
 
@@ -170,6 +176,7 @@ class MultiLabelBinarizerWrapper(BaseEstimator, TransformerMixin):
 
 
 from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import OrdinalEncoder
 
 def criar_preprocessor(train_df):
 
@@ -184,8 +191,9 @@ def criar_preprocessor(train_df):
     num_cols = [c for c in num_cols if "tracado_via" not in c]
 
     cat_pipeline = Pipeline(steps=[
-        ("rare", RareLabelEncoder(tol=0.20, n_categories=1)),
-        ("ohe", OneHotEncoder(sparse_output=False, handle_unknown="ignore"))
+        ("rare", RareLabelEncoder(tol=0.03, n_categories=1)),
+        # ("ohe", OneHotEncoder(sparse_output=False, handle_unknown="ignore"))
+        ("ordinal", OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1))
     ])
 
     tracado_pipeline = Pipeline(steps=[
@@ -200,12 +208,12 @@ def criar_preprocessor(train_df):
         transformers=[
             ("cat", cat_pipeline, cat_cols),
             ("tracado", tracado_pipeline, ["tracado_via"]),
-            ("num", num_pipeline, num_cols),
+            ("num", "passthrough", num_cols),
             ("bool", "passthrough", bool_cols)
-        ]
-    )
+        ], verbose_feature_names_out=False
+    ).set_output(transform="pandas")
 
-    return pre
+    return pre, cat_cols
 
 
 
@@ -246,7 +254,7 @@ def plot_roc_auc(y_true, y_score, label=None):
 # ===============================================================
 #                       EXECUÇÃO PRINCIPAL
 # ===============================================================
-imbalanced_classes_method = 'undersampling' # 'smote', None, 'undersampling', 'oversampling'
+imbalanced_classes_method = None # 'smote', None, 'undersampling', 'oversampling'
 
 
 datatran = load_datatran()
@@ -285,7 +293,7 @@ if imbalanced_classes_method == 'undersampling':
 #     y_train = datatran_train[y_col]
 
 # Pipeline de encoding
-preprocessor = criar_preprocessor(X_train)
+preprocessor, features_categoricas = criar_preprocessor(X_train)
 
 # X_train = pd.DataFrame(
 #     preprocessor.fit_transform(X_train),
@@ -315,8 +323,7 @@ preprocessor = criar_preprocessor(X_train)
 
 model_pca_pipeline = Pipeline([
     ('preprocessor', preprocessor),
-    # ('pca', PCA(n_components=0.90, random_state=17)),
-    ('lgbm', LGBMClassifier(class_weight='balanced'))
+    ('lgbm', LGBMClassifier(random_state=42, class_weight='balanced'))
 ])
 
 param_grid_lgbm = {
@@ -329,16 +336,19 @@ param_grid_lgbm = {
     "lgbm__n_estimators": [300, 400]
 }
 
-
 param_grid_lgbm_robust = {
-    "lgbm__num_leaves": [31, 60],
-    "lgbm__learning_rate": [0.05, 0.1],
-    "lgbm__n_estimators": [100, 200],
+    # num_leaves: 31 é o padrão. Tente valores maiores.
+    "lgbm__num_leaves": [31, 64, 128], 
     
-    # Regularização / Controle de Overfitting
-    "lgbm__min_child_samples": [20, 50], 
-    "lgbm__subsample": [0.8, 1.0], # Sorteia 80% das linhas por árvore
-    "lgbm__colsample_bytree": [0.8, 1.0] # Sorteia 80% das colunas por árvore
+    # max_depth: -1 deixa o modelo crescer livremente (controlado por num_leaves)
+    "lgbm__max_depth": [-1], 
+    
+    # learning_rate: menor + mais arvores = mais precisão
+    "lgbm__learning_rate": [0.01, 0.05],
+    "lgbm__n_estimators": [500, 1000],
+    
+    # min_child_samples: Importante para evitar overfit em folhas muito específicas
+    "lgbm__min_child_samples": [20, 50]
 }
 
 from sklearn.model_selection import StratifiedKFold
@@ -346,8 +356,8 @@ cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=17)
 
 lgbm_gs = GridSearchCV(
     estimator=model_pca_pipeline,
-    param_grid=param_grid_lgbm,
-    n_jobs=-3,
+    param_grid=param_grid_lgbm_robust,
+    n_jobs=-1,
     scoring="balanced_accuracy",
     cv=cv,
     refit=True,
@@ -358,7 +368,7 @@ from datetime import datetime
 
 t0 = time()
 print(f"Treino iniciado {datetime.now()}")
-lgbm_gs.fit(X_train, y_train)
+lgbm_gs.fit(X_train, y_train, lgbm__categorical_feature=features_categoricas)
 print("Best params:", lgbm_gs.best_params_)
 print(f"Treino em {time() - t0:.1f}s")
 
@@ -371,6 +381,10 @@ def evaluate(model, X_to_predict, y_true, data_slice_name):
     print(f"AUC {data_slice_name} = {auc:.4f}")
 
     y_pred = model.predict(X_to_predict)
+
+    bal_acc = balanced_accuracy_score(y_true, y_pred)
+
+    print(f"Bal ACC {data_slice_name} = {bal_acc}")
 
     # cm matrix
     sns.heatmap(confusion_matrix(y_pred=y_pred, y_true=y_true), annot=True, cmap='Blues', fmt='.0f')

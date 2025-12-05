@@ -83,7 +83,7 @@ def remover_colunas_irrelevantes(df):
         "ignorados", "feridos", "classificacao_acidente",
         "municipio", "delegacia", "regional",
         "tipo_acidente", "causa_acidente",
-        "id", "timestamp", "veiculos"
+        "id", "timestamp", "veiculos", "pessoas"
     ])
 
 
@@ -132,6 +132,10 @@ def converter_booleans(df):
             df[col] = df[col].astype(bool)
     return df
 
+def rodovia_para_categ(df):
+    df = df.copy()
+    df['br'] = df['br'].astype(str)
+    return df
 
 def preprocess(df):
     df = criar_target(df)
@@ -142,6 +146,7 @@ def preprocess(df):
     df = processar_dia_semana(df)
     df = processar_uso_solo(df)
     df = converter_booleans(df)
+    df = rodovia_para_categ(df)
     return df
 
 
