@@ -86,7 +86,7 @@ def remover_colunas_irrelevantes(df):
         "ignorados", "feridos", "classificacao_acidente",
         "municipio", "delegacia", "regional",
         "tipo_acidente", "causa_acidente",
-        "id", "timestamp", "veiculos", "pessoas"
+        "id", "timestamp", "pessoas", "veiculos", "uf", "uso_solo"
     ])
 
 
@@ -147,9 +147,9 @@ def preprocess(df):
     df = remover_colunas_irrelevantes(df)
     df = processar_km_lat_lon(df)
     df = processar_dia_semana(df)
-    df = processar_uso_solo(df)
+    # df = processar_uso_solo(df)
     df = converter_booleans(df)
-    # df = rodovia_para_categ(df)
+    df = rodovia_para_categ(df)
     return df
 
 
@@ -178,22 +178,72 @@ class MultiLabelBinarizerWrapper(BaseEstimator, TransformerMixin):
 from sklearn.preprocessing import StandardScaler
 from sklearn.preprocessing import OrdinalEncoder
 
+# ===============================================================
+#       CLASSE CUSTOMIZADA (Cole logo após os imports)
+# ===============================================================
+from sklearn.cluster import MiniBatchKMeans
+
+class GeoClusterFeatures(BaseEstimator, TransformerMixin):
+    def __init__(self, n_clusters=1000, random_state=17):
+        # n_clusters=150 cria 150 "regiões de risco" diferentes
+        self.n_clusters = n_clusters
+        self.random_state = random_state
+        self.kmeans = None
+
+    def fit(self, X, y=None):
+        # O K-Means aprende onde ficam os centros dos acidentes
+        self.kmeans = MiniBatchKMeans(
+            n_clusters=self.n_clusters, 
+            random_state=self.random_state,
+            n_init='auto'
+        )
+        self.kmeans.fit(X[['latitude', 'longitude']])
+        return self
+
+    def transform(self, X):
+        X = X.copy()
+        # 1. Cria a coluna Categórica (Qual região é essa?)
+        # Retorna números de 0 a 149
+        X['geo_cluster'] = self.kmeans.predict(X[['latitude', 'longitude']])
+        
+        # 2. Cria coluna Numérica (Distância até o centro do cluster)
+        # Ajuda a saber se o acidente foi no "coração" da zona de perigo ou na borda
+        centers = self.kmeans.cluster_centers_[X['geo_cluster']]
+        dist = np.linalg.norm(X[['latitude', 'longitude']] - centers, axis=1)
+        X['dist_cluster_center'] = dist
+        
+        # Retorna apenas as colunas novas como DataFrame
+        return X[['geo_cluster', 'dist_cluster_center']]
+
+    def get_feature_names_out(self, input_features=None):
+        return ["geo_cluster", "dist_cluster_center"]
+
 def criar_preprocessor(train_df):
-
+    
+    # --- 1. Separação de Colunas ---
     cat_cols = train_df.select_dtypes(include="object").columns.tolist()
-    cat_cols.remove("tracado_via")
-
+    if "tracado_via" in cat_cols: cat_cols.remove("tracado_via")
+    
     bool_cols = [c for c in train_df.select_dtypes("bool").columns if c != "risco_grave"]
-
+    
     num_cols = train_df.select_dtypes(include=["int64", "float64"]).columns.tolist()
-    # num_cols.remove("risco_grave")      # target não entra
-    # E remover colunas que serão tratadas nos pipelines categóricos:
-    num_cols = [c for c in num_cols if "tracado_via" not in c]
+    # Removemos lat/lon das numéricas "comuns" se quisermos, 
+    # mas aqui vou deixar elas passarem também para o modelo ter a coordenada exata.
+    # Apenas garantimos que o target não esteja aqui
+    num_cols = [c for c in num_cols if "tracado_via" not in c and c != "risco_grave"]
 
+
+    # --- 2. Pipelines Específicos ---
+    
+    # NOVO: Pipeline Geoespacial
+    geo_pipeline = Pipeline([
+        ('cluster', GeoClusterFeatures(n_clusters=150, random_state=17))
+    ])
+
+    # Pipeline Categórico (Ordinal para LGBM)
     cat_pipeline = Pipeline(steps=[
         ("rare", RareLabelEncoder(tol=0.03, n_categories=1)),
-        ("ohe", OneHotEncoder(sparse_output=False, handle_unknown="ignore"))
-        # ("ordinal", OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1))
+        ("ordinal", OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1))
     ])
 
     tracado_pipeline = Pipeline(steps=[
@@ -204,17 +254,26 @@ def criar_preprocessor(train_df):
         ("scaler", StandardScaler())
     ])
 
+    # --- 3. Juntar Tudo ---
     pre = ColumnTransformer(
         transformers=[
+            # AQUI ENTRA O GEO CLUSTER:
+            # Ele pega lat/lon e cospe 'geo_cluster' e 'dist_cluster_center'
+            ("geo", geo_pipeline, ["latitude", "longitude"]),
+            
             ("cat", cat_pipeline, cat_cols),
             ("tracado", tracado_pipeline, ["tracado_via"]),
-            ("num", "passthrough", num_cols),
+            ("num", "passthrough", num_cols), # Numéricas passam direto pro LGBM
             ("bool", "passthrough", bool_cols)
-        ], verbose_feature_names_out=False
-    ).set_output(transform="pandas")
+        ],
+        verbose_feature_names_out=False
+    ).set_output(transform="pandas") # Garante saída Pandas
 
-    return pre, cat_cols
+    # --- 4. Atualizar lista de Categóricas para o LGBM ---
+    # Pegamos as originais + a nova 'geo_cluster' que criamos
+    features_categoricas = cat_cols + ["geo_cluster"]
 
+    return pre, features_categoricas
 
 
 # ===============================================================
@@ -356,7 +415,7 @@ cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=17)
 
 lgbm_gs = GridSearchCV(
     estimator=model_pca_pipeline,
-    param_grid=param_grid_lgbm,
+    param_grid=param_grid_lgbm_robust,
     n_jobs=-1,
     scoring="balanced_accuracy",
     cv=cv,
@@ -368,8 +427,7 @@ from datetime import datetime
 
 t0 = time()
 print(f"Treino iniciado {datetime.now()}")
-# lgbm_gs.fit(X_train, y_train, lgbm__categorical_feature=features_categoricas)
-lgbm_gs.fit(X_train, y_train)
+lgbm_gs.fit(X_train, y_train, lgbm__categorical_feature=features_categoricas)
 print("Best params:", lgbm_gs.best_params_)
 print(f"Treino em {time() - t0:.1f}s")
 
@@ -425,11 +483,10 @@ evaluate(lgbm_gs, X_oot, y_oot, 'OOT')
 booster = lgbm_gs.best_estimator_.named_steps['lgbm'].booster_
 importancias = booster.feature_importance(importance_type='gain')
 
-# Recuperar nomes das features (Pipeline 'pandas' output ajuda aqui)
-# Como usamos set_output="pandas", podemos tentar pegar direto do transformador
+# Recuperar nomes das features
 feature_names = lgbm_gs.best_estimator_.named_steps['preprocessor'].get_feature_names_out()
 
-# Limpeza dos nomes para ficar legível
+# Limpeza dos nomes
 feature_names = [f.split('__')[-1] for f in feature_names]
 
 df_imp = pd.DataFrame({
@@ -443,4 +500,12 @@ plt.figure(figsize=(10, 8))
 sns.barplot(x='Gain', y='Feature', data=df_imp.head(20))
 plt.title('O que realmente importa para o modelo?')
 plt.show()
+# %%
+import joblib
+
+# Salvar o melhor modelo encontrado pelo GridSearch
+# É importante salvar o "best_estimator_" pois ele contém o pipeline completo configurado
+joblib.dump(lgbm_gs.best_estimator_, 'modelo_acidentes_geocluster.pkl')
+
+print("Modelo salvo como 'modelo_acidentes.pkl'")
 # %%

@@ -249,7 +249,7 @@ def plot_roc_auc(y_true, y_score, label=None):
 # ===============================================================
 #                       EXECUÇÃO PRINCIPAL
 # ===============================================================
-imbalanced_classes_method = 'undersampling' # 'smote', None, 'undersampling', 'oversampling'
+imbalanced_classes_method = 'smote' # 'smote', None, 'undersampling', 'oversampling'
 
 
 datatran = load_datatran()
