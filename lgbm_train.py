@@ -2,32 +2,40 @@
 # ===============================================================
 #                      IMPORTS
 # ===============================================================
-import os
+
 import numpy as np
 import pandas as pd
-from time import time
-from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.model_selection import train_test_split, GridSearchCV
-from sklearn.preprocessing import OneHotEncoder, MultiLabelBinarizer
-from sklearn.compose import ColumnTransformer
-from sklearn.pipeline import Pipeline
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import confusion_matrix, roc_curve, auc
 import matplotlib.pyplot as plt
 import seaborn as sns
-from feature_engine.encoding import RareLabelEncoder
-from tqdm import tqdm
-import warnings
-from sklearn.utils import resample
-from sklearn.decomposition import PCA
-from lightgbm import LGBMClassifier
-from sklearn.metrics import balanced_accuracy_score
 
-warnings.filterwarnings(
-    "ignore", 
-    message="This Pipeline instance is not fitted yet.", 
-    category=FutureWarning
-)
+from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.cluster import MiniBatchKMeans
+from sklearn.compose import ColumnTransformer
+from sklearn.metrics import confusion_matrix, roc_curve, auc, balanced_accuracy_score
+from sklearn.model_selection import train_test_split, StratifiedKFold, GridSearchCV
+from imblearn.pipeline import Pipeline
+from sklearn.preprocessing import OrdinalEncoder, MultiLabelBinarizer
+from sklearn.utils import resample
+
+from feature_engine.encoding import RareLabelEncoder
+
+from lightgbm import LGBMClassifier
+
+import warnings
+import joblib
+
+from time import time
+from datetime import datetime
+
+from imblearn.over_sampling import SMOTE
+from sklearn.utils.class_weight import compute_sample_weight
+
+# Remover o warning do Pipeline
+# warnings.filterwarnings(
+#     "ignore", 
+#     message="This Pipeline instance is not fitted yet.", 
+#     category=FutureWarning
+# )
 
 
 # ===============================================================
@@ -45,6 +53,7 @@ def load_datatran():
 # ===============================================================
 #              FUNÇÕES DE PRÉ-PROCESSAMENTO
 # ===============================================================
+
 def criar_timestamp(df):
     df = df.copy()
     df['timestamp'] = pd.to_datetime(
@@ -86,7 +95,7 @@ def remover_colunas_irrelevantes(df):
         "ignorados", "feridos", "classificacao_acidente",
         "municipio", "delegacia", "regional",
         "tipo_acidente", "causa_acidente",
-        "id", "timestamp", "veiculos", "pessoas"
+        "id", "timestamp", "pessoas", "veiculos"
     ])
 
 
@@ -149,7 +158,7 @@ def preprocess(df):
     df = processar_dia_semana(df)
     df = processar_uso_solo(df)
     df = converter_booleans(df)
-    # df = rodovia_para_categ(df)
+    df = rodovia_para_categ(df)
     return df
 
 
@@ -175,51 +184,103 @@ class MultiLabelBinarizerWrapper(BaseEstimator, TransformerMixin):
         return self.mlb.classes_
 
 
-from sklearn.preprocessing import StandardScaler
-from sklearn.preprocessing import OrdinalEncoder
+# ===============================================================
+#                           GEOCLUSTER
+# ===============================================================
+
+class GeoClusterFeatures(BaseEstimator, TransformerMixin):
+    def __init__(self, n_clusters=1000, random_state=17):
+        self.n_clusters = n_clusters
+        self.random_state = random_state
+        self.kmeans = None
+
+    def fit(self, X, y=None):
+        # O K-Means aprende onde ficam os centros dos acidentes
+        self.kmeans = MiniBatchKMeans(
+            n_clusters=self.n_clusters, 
+            random_state=self.random_state,
+            n_init='auto'
+        )
+        self.kmeans.fit(X[['latitude', 'longitude']])
+        return self
+
+    def transform(self, X):
+        X = X.copy()
+        # Cria a coluna Categórica (Qual região é essa?)
+        # Retorna números de 0 a 149
+        X['geo_cluster'] = self.kmeans.predict(X[['latitude', 'longitude']])
+        
+        # Cria coluna Numérica (Distância até o centro do cluster)
+        # Ajuda a saber se o acidente foi no "coração" da zona de perigo ou na borda
+        centers = self.kmeans.cluster_centers_[X['geo_cluster']]
+        dist = np.linalg.norm(X[['latitude', 'longitude']] - centers, axis=1)
+        X['dist_cluster_center'] = dist
+        
+        # Retorna apenas as colunas novas como DataFrame
+        return X[['geo_cluster', 'dist_cluster_center']]
+
+    def get_feature_names_out(self, input_features=None):
+        return ["geo_cluster", "dist_cluster_center"]
 
 def criar_preprocessor(train_df):
-
+    
+    # --- Separação de Colunas ---
     cat_cols = train_df.select_dtypes(include="object").columns.tolist()
-    cat_cols.remove("tracado_via")
-
+    if "tracado_via" in cat_cols: cat_cols.remove("tracado_via")
+    
     bool_cols = [c for c in train_df.select_dtypes("bool").columns if c != "risco_grave"]
-
+    
     num_cols = train_df.select_dtypes(include=["int64", "float64"]).columns.tolist()
-    # num_cols.remove("risco_grave")      # target não entra
-    # E remover colunas que serão tratadas nos pipelines categóricos:
-    num_cols = [c for c in num_cols if "tracado_via" not in c]
+ 
+    num_cols = [c for c in num_cols if "tracado_via" not in c and c != "risco_grave"]
 
+
+    # --- Pipelines Específicos ---
+    
+    # Pipeline Geoespacial
+    geo_pipeline = Pipeline([
+        ('cluster', GeoClusterFeatures(n_clusters=150, random_state=17))
+    ])
+
+    # Pipeline Categórico (Ordinal para LGBM)
     cat_pipeline = Pipeline(steps=[
         ("rare", RareLabelEncoder(tol=0.03, n_categories=1)),
-        ("ohe", OneHotEncoder(sparse_output=False, handle_unknown="ignore"))
-        # ("ordinal", OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1))
+        ("ordinal", OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1))
     ])
 
     tracado_pipeline = Pipeline(steps=[
         ("multilabel", MultiLabelBinarizerWrapper(separator=";"))
     ])
 
-    num_pipeline = Pipeline(steps=[
-        ("scaler", StandardScaler())
-    ])
+    # num_pipeline = Pipeline(steps=[
+    #     ("scaler", StandardScaler())
+    # ])
 
+    # --- Juntar Tudo ---
     pre = ColumnTransformer(
         transformers=[
+
+            ("geo", geo_pipeline, ["latitude", "longitude"]),
+            
             ("cat", cat_pipeline, cat_cols),
             ("tracado", tracado_pipeline, ["tracado_via"]),
             ("num", "passthrough", num_cols),
             ("bool", "passthrough", bool_cols)
-        ], verbose_feature_names_out=False
+        ],
+        verbose_feature_names_out=False
     ).set_output(transform="pandas")
 
-    return pre, cat_cols
+    # --- Atualizar lista de Categóricas para o LGBM ---
+    # Originais + a nova 'geo_cluster' que criamos
+    features_categoricas = cat_cols + ["geo_cluster"]
 
+    return pre, features_categoricas
 
 
 # ===============================================================
 #                  BALANCEAMENTO DO TARGET
 # ===============================================================
+
 def undersample_dataset(df, y_col):
     true_df = df[df[y_col] == 1]
     false_df = df[df[y_col] == 0].sample(n=len(true_df), random_state=17)
@@ -235,6 +296,7 @@ def oversample_dataset(df, y_col):
 # ===============================================================
 #                    PLOT ROC AUC
 # ===============================================================
+
 def plot_roc_auc(y_true, y_score, label=None):
     fpr, tpr, _ = roc_curve(y_true, y_score)
     value = auc(fpr, tpr)
@@ -254,6 +316,7 @@ def plot_roc_auc(y_true, y_score, label=None):
 # ===============================================================
 #                       EXECUÇÃO PRINCIPAL
 # ===============================================================
+
 imbalanced_classes_method = 'undersampling' # 'smote', None, 'undersampling', 'oversampling'
 
 
@@ -265,11 +328,8 @@ cut_date = pd.to_datetime("2025-09-01")
 oot_df = preprocess(datatran[datatran["timestamp"] >= cut_date])
 datatran = preprocess(datatran[datatran["timestamp"] < cut_date])
 
-# Balanceamento
-y_col = "risco_grave"
-
-
 # Criação de X e y
+y_col = "risco_grave"
 X = datatran.drop(columns=y_col)
 y = datatran[y_col]
 
@@ -285,36 +345,25 @@ if imbalanced_classes_method == 'undersampling':
 
     X_train = datatran_train.drop(columns=y_col)
     y_train = datatran_train[y_col]
-# if imbalanced_classes_method == 'oversampling':
-#     datatran_train = pd.concat([X_train, y_train], axis=1)
-#     datatran_train = oversample_dataset(datatran_train, y_col)
+elif imbalanced_classes_method == 'oversampling':
+    datatran_train = pd.concat([X_train, y_train], axis=1)
+    datatran_train = oversample_dataset(datatran_train, y_col)
 
-#     X_train = datatran_train.drop(columns=y_col)
-#     y_train = datatran_train[y_col]
+    X_train = datatran_train.drop(columns=y_col)
+    y_train = datatran_train[y_col]
 
 # Pipeline de encoding
 preprocessor, features_categoricas = criar_preprocessor(X_train)
 
-# X_train = pd.DataFrame(
-#     preprocessor.fit_transform(X_train),
-#     columns=preprocessor.get_feature_names_out()
-# )
+# Class Weights (só é utilizado se o modelo sendo testado não tiver o argumento de class_weights por natureza)
+sample_weights = compute_sample_weight(class_weight="balanced", y=y_train)
 
-# X_test = pd.DataFrame(
-#     preprocessor.transform(X_test),
-#     columns=preprocessor.get_feature_names_out()
-# )
+# scale_pos_weight (só é aplicado em alguns modelos)
+n_neg = (y_train[y_train == 0]).shape[0]
+n_pos = (y_train[y_train == 1]).shape[0]
+print(f"Classe [0]: {n_neg}; Classe [1]: {n_pos}" )
 
-# # SMOTE
-# from imblearn.over_sampling import SMOTE
-
-# if imbalanced_classes_method == 'smote':
-#     smote = SMOTE(random_state=17)
-#     X_train, y_train = smote.fit_resample(X_train, y_train)
-
-# # class weights
-# from sklearn.utils.class_weight import compute_sample_weight
-# sample_weights = compute_sample_weight(class_weight="balanced", y=y_train)
+scale = n_neg / n_pos
 
 
 # ---------------------------------------------------
@@ -323,13 +372,20 @@ preprocessor, features_categoricas = criar_preprocessor(X_train)
 
 model_pca_pipeline = Pipeline([
     ('preprocessor', preprocessor),
-    ('lgbm', LGBMClassifier(random_state=42, class_weight='balanced'))
+    ('smote', SMOTE(random_state=42)), # este passo é desativado logo abaixo caso imbalanced_classes_method != 'smote'
+    ('lgbm', LGBMClassifier(random_state=42, scale_pos_weight=scale)) # , class_weight='balanced'))
 ])
+
+# Condicional para ativar o passo de SMOTE da pipeline
+if imbalanced_classes_method != 'smote':
+    model_pca_pipeline.set_params(smote='passthrough')
+else:
+    print("Aplicando SMOTE...")
 
 param_grid_lgbm = {
     # Estrutura da árvore
     "lgbm__num_leaves": [15, 25],
-    "lgbm__max_depth": [15, 20], # -1 é ilimitado (controlado por num_leaves)
+    "lgbm__max_depth": [15, 20],
     
     # Aprendizado
     "lgbm__learning_rate": [0.01, 0.05],
@@ -337,39 +393,33 @@ param_grid_lgbm = {
 }
 
 param_grid_lgbm_robust = {
-    # num_leaves: 31 é o padrão. Tente valores maiores.
+    # Estrutura da árvore
     "lgbm__num_leaves": [31, 64, 128], 
-    
-    # max_depth: -1 deixa o modelo crescer livremente (controlado por num_leaves)
-    "lgbm__max_depth": [-1], 
-    
-    # learning_rate: menor + mais arvores = mais precisão
+    "lgbm__max_depth": [-1],
+    "lgbm__min_child_samples": [20, 50],
+
+    # Aprendizado
     "lgbm__learning_rate": [0.01, 0.05],
-    "lgbm__n_estimators": [500, 1000],
-    
-    # min_child_samples: Importante para evitar overfit em folhas muito específicas
-    "lgbm__min_child_samples": [20, 50]
+    "lgbm__n_estimators": [500, 1000]
+
 }
 
-from sklearn.model_selection import StratifiedKFold
+
 cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=17)
 
 lgbm_gs = GridSearchCV(
     estimator=model_pca_pipeline,
-    param_grid=param_grid_lgbm,
+    param_grid=param_grid_lgbm_robust,
     n_jobs=-1,
     scoring="balanced_accuracy",
     cv=cv,
-    refit=True,
-    verbose=3
+    refit=True
 )
 
-from datetime import datetime
 
 t0 = time()
 print(f"Treino iniciado {datetime.now()}")
-# lgbm_gs.fit(X_train, y_train, lgbm__categorical_feature=features_categoricas)
-lgbm_gs.fit(X_train, y_train)
+lgbm_gs.fit(X_train, y_train, lgbm__categorical_feature=features_categoricas)
 print("Best params:", lgbm_gs.best_params_)
 print(f"Treino em {time() - t0:.1f}s")
 
@@ -404,32 +454,18 @@ evaluate(lgbm_gs, X_train, y_train, 'TRAIN')
 evaluate(lgbm_gs, X_test, y_test, 'TEST')
 
 # %%
-# feature_importances = pd.DataFrame([X_train_pre.columns, rf.best_estimator_.feature_importances_]).T
 
-# feature_importances.columns = ['coluna', 'importancia']
+# ===============================================================
+#              AVALIAÇÃO DE IMPORTÂNCIA DE FEATURES
+# ===============================================================
 
-# feature_importances = feature_importances.sort_values(by='importancia', ascending=False)
-
-X_oot = oot_df.drop(columns=y_col)
-y_oot = oot_df[y_col]
-
-# X_oot = pd.DataFrame(
-#     preprocessor.transform(X_oot),
-#     columns=preprocessor.get_feature_names_out()
-# )
-
-evaluate(lgbm_gs, X_oot, y_oot, 'OOT')
-# %%
-
-# Código para ver o que está prestando
 booster = lgbm_gs.best_estimator_.named_steps['lgbm'].booster_
 importancias = booster.feature_importance(importance_type='gain')
 
-# Recuperar nomes das features (Pipeline 'pandas' output ajuda aqui)
-# Como usamos set_output="pandas", podemos tentar pegar direto do transformador
+# Recuperar nomes das features
 feature_names = lgbm_gs.best_estimator_.named_steps['preprocessor'].get_feature_names_out()
 
-# Limpeza dos nomes para ficar legível
+# Limpeza dos nomes
 feature_names = [f.split('__')[-1] for f in feature_names]
 
 df_imp = pd.DataFrame({
@@ -443,4 +479,28 @@ plt.figure(figsize=(10, 8))
 sns.barplot(x='Gain', y='Feature', data=df_imp.head(20))
 plt.title('O que realmente importa para o modelo?')
 plt.show()
+
+# %%
+
+# ===============================================================
+#                   AVALIAÇÃO NO OUT-OF-TIME
+# ===============================================================
+
+
+X_oot = oot_df.drop(columns=y_col)
+y_oot = oot_df[y_col]
+
+evaluate(lgbm_gs, X_oot, y_oot, 'OOT')
+
+# %%
+
+# ===============================================================
+#                       EXPORTAR O .pkl
+# ===============================================================
+
+# Salvar o melhor modelo encontrado pelo GridSearch
+joblib.dump(lgbm_gs.best_estimator_, 'modelo_acidentes_geocluster.pkl')
+
+print("Modelo salvo como 'modelo_acidentes.pkl'")
+
 # %%
