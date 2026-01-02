@@ -85,7 +85,10 @@ def criar_colunas_tempo(df):
 
 def limpar_nulos(df):
     df = df.copy()
+    nrows_before = df.shape[0]
     df = df.dropna(how='any')
+    nrows_after = df.shape[0]
+    print(f"Number of rows removed: {nrows_before-nrows_after} | {100*(nrows_before-nrows_after)/nrows_before:.2f}%")
     return df
 
 
@@ -184,44 +187,6 @@ class MultiLabelBinarizerWrapper(BaseEstimator, TransformerMixin):
         return self.mlb.classes_
 
 
-# ===============================================================
-#                           GEOCLUSTER
-# ===============================================================
-
-class GeoClusterFeatures(BaseEstimator, TransformerMixin):
-    def __init__(self, n_clusters=1000, random_state=17):
-        self.n_clusters = n_clusters
-        self.random_state = random_state
-        self.kmeans = None
-
-    def fit(self, X, y=None):
-        # O K-Means aprende onde ficam os centros dos acidentes
-        self.kmeans = MiniBatchKMeans(
-            n_clusters=self.n_clusters, 
-            random_state=self.random_state,
-            n_init='auto'
-        )
-        self.kmeans.fit(X[['latitude', 'longitude']])
-        return self
-
-    def transform(self, X):
-        X = X.copy()
-        # Cria a coluna Categórica (Qual região é essa?)
-        # Retorna números de 0 a 149
-        X['geo_cluster'] = self.kmeans.predict(X[['latitude', 'longitude']])
-        
-        # Cria coluna Numérica (Distância até o centro do cluster)
-        # Ajuda a saber se o acidente foi no "coração" da zona de perigo ou na borda
-        centers = self.kmeans.cluster_centers_[X['geo_cluster']]
-        dist = np.linalg.norm(X[['latitude', 'longitude']] - centers, axis=1)
-        X['dist_cluster_center'] = dist
-        
-        # Retorna apenas as colunas novas como DataFrame
-        return X[['geo_cluster', 'dist_cluster_center']]
-
-    def get_feature_names_out(self, input_features=None):
-        return ["geo_cluster", "dist_cluster_center"]
-
 def criar_preprocessor(train_df):
     
     # --- Separação de Colunas ---
@@ -237,10 +202,6 @@ def criar_preprocessor(train_df):
 
     # --- Pipelines Específicos ---
     
-    # Pipeline Geoespacial
-    geo_pipeline = Pipeline([
-        ('cluster', GeoClusterFeatures(n_clusters=150, random_state=17))
-    ])
 
     # Pipeline Categórico (Ordinal para LGBM)
     cat_pipeline = Pipeline(steps=[
@@ -260,7 +221,7 @@ def criar_preprocessor(train_df):
     pre = ColumnTransformer(
         transformers=[
 
-            ("geo", geo_pipeline, ["latitude", "longitude"]),
+            # ("geo", geo_pipeline, ["latitude", "longitude"]),
             
             ("cat", cat_pipeline, cat_cols),
             ("tracado", tracado_pipeline, ["tracado_via"]),
@@ -272,7 +233,7 @@ def criar_preprocessor(train_df):
 
     # --- Atualizar lista de Categóricas para o LGBM ---
     # Originais + a nova 'geo_cluster' que criamos
-    features_categoricas = cat_cols + ["geo_cluster"]
+    features_categoricas = cat_cols
 
     return pre, features_categoricas
 
@@ -325,19 +286,22 @@ datatran = criar_timestamp(datatran)
 
 # Separar OOT
 cut_date = pd.to_datetime("2025-09-01")
-oot_df = preprocess(datatran[datatran["timestamp"] >= cut_date])
-datatran = preprocess(datatran[datatran["timestamp"] < cut_date])
+no_oot_df = preprocess(datatran[datatran["timestamp"] < cut_date])
 
 # Criação de X e y
 y_col = "risco_grave"
-X = datatran.drop(columns=y_col)
-y = datatran[y_col]
+X = no_oot_df.drop(columns=y_col)
+y = no_oot_df[y_col]
 
 # Train/Test Split
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.1, random_state=17,
     stratify=y
 )
+
+# Checando desbalanceamento
+print(f"Rate of 1 (True) class: {100*y_train.sum()/len(y_train):.2f}%")
+
 
 if imbalanced_classes_method == 'undersampling':
     datatran_train = pd.concat([X_train, y_train], axis=1)
@@ -364,7 +328,6 @@ n_pos = (y_train[y_train == 1]).shape[0]
 print(f"Classe [0]: {n_neg}; Classe [1]: {n_pos}" )
 
 scale = n_neg / n_pos
-
 
 # ---------------------------------------------------
 
@@ -485,7 +448,8 @@ plt.show()
 # ===============================================================
 #                   AVALIAÇÃO NO OUT-OF-TIME
 # ===============================================================
-
+print("Preprocessing OOT dataset")
+oot_df = preprocess(datatran[datatran["timestamp"] >= cut_date])
 
 X_oot = oot_df.drop(columns=y_col)
 y_oot = oot_df[y_col]
