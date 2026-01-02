@@ -107,3 +107,22 @@ All these techniques yielded similar results, with LightGBM reaching the highest
 The following results were collected at `lgbm_train.py`.
 
 ### Train dataset
+
+Balanced Accuracy: 0.65
+
+![ROC Curve for train dataset](/results/lgbm_train/roc_train.png)
+![Confusion Matrix for train dataset](/results/lgbm_train/cm_train.png)
+
+### Test dataset
+
+Balanced Accuracy: 0.59
+
+![ROC Curve for test dataset](/results/lgbm_train/roc_test.png)
+![Confusion Matrix for test dataset](/results/lgbm_train/cm_test.png)
+
+### OOT dataset
+
+Balanced Accuracy: 0.58
+
+![ROC Curve for oot dataset](/results/lgbm_train/roc_oot.png)
+![Confusion Matrix for oot dataset](/results/lgbm_train/cm_oot.png)
