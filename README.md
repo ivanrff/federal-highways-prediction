@@ -2,9 +2,11 @@
 
 This project goal was to build a machine learning model to predict if a road accident had fatally or gravely wounded victims, so we are dealing with a classification problem that should output 1 if the example had any fatally or gravely wounded victims and 0 if it hadn't. A group of models were trained on train_models.py and after that a LightGBM model was trained on `lgbm_train.py`.
 
+This work makes use of 4 phases of the CRISP-DM framework: Data Understanding, Data Preparation, Modeling and Evaluation.
+
 ## Data Understanding
 
-The data was taken from the PRF (Polícia Rodoviária Federal, Federal Highway Police) website, for the 2023, 2024 and 2025 years.
+The data was taken from the PRF (Polícia Rodoviária Federal, Federal Highway Police) website: `datatran2023.csv`, `datatran2024.csv` and `datatran2025.csv`.
 
 ### Columns
 
@@ -81,7 +83,7 @@ All these encoders were applied through pipelines, so they could be reproduced i
 
 ## Modelling
 
-The dataset was split again into train and test. For the first modelling test, a group of models was chosen (`train_models.py`):
+The dataset was split again into train and test. For the first modelling test, a group of models was chosen and trained in`train_models.py`:
 
 ```
 modelos = {
@@ -102,9 +104,12 @@ For these models, the imbalaced dataset was handled via four techniques.
 - Oversampling (replicating rows)
 - None (using the `class_weights` parameter from some models)
 
-All these techniques yielded similar results, with LightGBM reaching the highest balanced accuracy in the test dataset (0.59~0.61) with undersampling and oversampling applied.
+All these techniques yielded similar results (as seen in the .md files inside results/ folder), with LightGBM achieving the highest balanced accuracy in the test dataset (0.59~0.61) with undersampling and oversampling applied.
 
-The following results were collected at `lgbm_train.py`.
+## Evaluation
+
+The following results were collected from `lgbm_train.py`. After experimenting with a vast array of techniques, it was concluded this was the roof of what could be achievable with the provided data. 
+We can observe the metrics in the training dataset are close to the ones in the test and out-of-time dataset, proving the model is mostly focusing on the relevant information to predict the target and isn't just copying information it's seen before.
 
 ### Train dataset
 
@@ -126,3 +131,9 @@ Balanced Accuracy: 0.58
 
 ![ROC Curve for oot dataset](/results/lgbm_train/roc_oot.png)
 ![Confusion Matrix for oot dataset](/results/lgbm_train/cm_oot.png)
+
+# Conclusion
+
+The project successfully established a robust machine learning pipeline for accident severity prediction. The LightGBM model demonstrated consistency and stability, maintaining a Balanced Accuracy between 0.58 and 0.59 across Test and Out-of-Time (OOT) datasets, which confirms the absence of overfitting.
+
+While a Balanced Accuracy of ~60% might appear modest, it represents a significant improvement over random guessing (50%) in a highly stochastic domain. The model successfully captures systematic risks (such as dangerous road segments, specific times of day, and highway types) but naturally struggles with aleatoric uncertainty—unpredictable factors like driver behavior, sudden mechanical failures, or speeding, which are not present in the dataset.
